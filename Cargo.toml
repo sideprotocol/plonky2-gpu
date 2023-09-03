@@ -1,0 +1,10 @@
+[workspace]
+members = ["ecdsa", "evm", "field", "insertion", "maybe_rayon", "plonky2", "starky", "system_zero", "u32", "util", "waksman"]
+
+[profile.release]
+opt-level = 3
+#lto = "fat"
+#codegen-units = 1
+
+[profile.bench]
+opt-level = 3

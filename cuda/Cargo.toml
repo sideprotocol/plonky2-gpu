@@ -1,0 +1,15 @@
+[package]
+name = "plonky2_cuda"
+version = "0.1.0"
+authors = [ "unknown" ]
+description = "gpu accelerate for plonky2"
+edition = "2021"
+
+[build-dependencies.cc]
+version = "^1.0.70"
+
+[build-dependencies.which]
+version = "^4.0"
+
+[dependencies]
+cudart = { path = "../z-prize-msm-gpu/bellman-cuda-rust/cudart", package = "bellman-cuda-cudart"}
