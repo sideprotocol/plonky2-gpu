@@ -5,6 +5,8 @@ use std::ffi::c_void;
 use std::fs::File;
 use std::io::Write;
 use std::mem;
+use std::mem::transmute;
+use std::ops::IndexMut;
 use std::process::exit;
 use std::sync::Arc;
 
@@ -33,18 +35,24 @@ use plonky2_field::packable::Packable;
 use cudart;
 use cudart::memory::CudaMutSlice;
 use cudart::memory::CudaSlice;
+// use rustacuda::memory::{AsyncCopyDestination, DeviceBuffer, DeviceSlice};
+use rustacuda::prelude::*;
+use rustacuda::memory::{AsyncCopyDestination, DeviceBuffer, DeviceSlice};
 
 /// Four (~64 bit) field elements gives ~128 bit security.
 pub const SALT_SIZE: usize = 4;
 
 pub struct CudaInnerContext {
-    pub stream: cudart::stream::CudaStream,
-    pub stream2: cudart::stream::CudaStream,
+    // pub stream: cudart::stream::CudaStream,
+    // pub stream2: cudart::stream::CudaStream,
+    pub stream: rustacuda::stream::Stream,
+    pub stream2: rustacuda::stream::Stream,
 
 }
 
 #[repr(C)]
-pub struct CudaInvContext<'a, F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
+// pub struct CudaInvContext<'a, F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
+pub struct CudaInvContext<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
 {
     pub inner: CudaInnerContext,
     pub ext_values_flatten :Arc<Vec<F>>,
@@ -55,11 +63,17 @@ pub struct CudaInvContext<'a, F: RichField + Extendable<D>, C: GenericConfig<D, 
     pub values_flatten2     :Arc<Vec<F>>,
     pub digests_and_caps_buf2 :Arc<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>,
 
-    pub values_device: cudart::memory::DeviceAllocation::<'a, F>,
-    pub ext_values_device: cudart::memory::DeviceAllocation::<'a, F>,
-    pub root_table_device: cudart::memory::DeviceAllocation::<'a, F>,
-    pub root_table_device2: cudart::memory::DeviceAllocation::<'a, F>,
-    pub shift_powers_device: cudart::memory::DeviceAllocation::<'a, F>,
+    pub values_device: DeviceBuffer::<F>,
+    pub ext_values_device: DeviceBuffer::<F>,
+    pub root_table_device: DeviceBuffer::<F>,
+    pub root_table_device2: DeviceBuffer::<F>,
+    pub shift_powers_device: DeviceBuffer::<F>,
+
+    // pub values_device: cudart::memory::DeviceAllocation::<'a, F>,
+    // pub ext_values_device: cudart::memory::DeviceAllocation::<'a, F>,
+    // pub root_table_device: cudart::memory::DeviceAllocation::<'a, F>,
+    // pub root_table_device2: cudart::memory::DeviceAllocation::<'a, F>,
+    // pub shift_powers_device: cudart::memory::DeviceAllocation::<'a, F>,
 }
 
 /// Represents a FRI oracle, i.e. a batch of polynomials which have been Merklized.
@@ -240,7 +254,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         timing: &mut TimingTree,
         fft_root_table: Option<&FftRootTable<F>>,
         fft_root_table_deg: &Vec<F>,
-        ctx: &mut CudaInvContext<'_, F, C, D>,
+        ctx: &mut CudaInvContext<F, C, D>,
     ) -> Self
     {
         // let poly_num: usize = values.len();
@@ -293,7 +307,20 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         let root_table_device = &mut ctx.root_table_device;
         let root_table_device2 = &mut ctx.root_table_device2;
         let shift_powers_device = &mut ctx.shift_powers_device;
-        cudart::memory::memory_copy(&mut values_device.index_mut(0..values.len()), values).unwrap();
+        // cudart::memory::memory_copy(&mut values_device.index_mut(0..values.len()), values).unwrap();
+        // cudart::memory::memory_copy(&mut values_device.index_mut(0..values.len()), values).unwrap();
+
+        // unsafe {
+        //     DeviceSlice::<F>::async_copy_from(values_device, values, &ctx.inner.stream).unwrap();
+        // }
+
+        unsafe {
+            transmute::<&mut DeviceBuffer<F>, &mut DeviceBuffer<u64>>(values_device).copy_from(
+                transmute::<&Vec<F>, &Vec<u64>>(values),
+                // &ctx.inner.stream
+            ).unwrap();
+            ctx.inner.stream.synchronize().unwrap();
+        }
 
         unsafe {
             let ctx_ptr :*mut CudaInnerContext = &mut ctx.inner;
@@ -302,13 +329,13 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 "FFT + build Merkle tree + transpose with gpu",
                 {
                     plonky2_cuda::merkle_tree_from_values(
-                        values_device.as_mut_c_void_ptr() as *mut u64,
-                        ext_values_device.as_mut_c_void_ptr() as *mut u64,
+                        values_device.as_mut_ptr() as *mut u64,
+                        ext_values_device.as_mut_ptr() as *mut u64,
                         poly_num as i32, values_num_per_poly as i32,
                         lg_n as i32,
-                        root_table_device.as_c_void_ptr() as *const u64,
-                        root_table_device2.as_c_void_ptr() as *const u64,
-                        shift_powers_device.as_c_void_ptr() as *const u64,
+                        root_table_device.as_ptr() as *const u64,
+                        root_table_device2.as_ptr() as *const u64,
+                        shift_powers_device.as_ptr() as *const u64,
                         n_inv_ptr as *const u64,
                         rate_bits as i32,
                         salt_size as i32,
@@ -324,12 +351,26 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             "copy result",
             {
                 let alllen = values_flatten_len;
-                cudart::memory::memory_copy_with_kind(values_flatten, &values_device.index(0..alllen),
-                    cudart::memory::CudaMemoryCopyKind::DeviceToHost).unwrap();
+                // cudart::memory::memory_copy_with_kind(values_flatten, &values_device.index(0..alllen),
+                //     cudart::memory::CudaMemoryCopyKind::DeviceToHost).unwrap();
+
+                unsafe {
+                    transmute::<&DeviceBuffer<F>, &DeviceBuffer<u64>>(values_device).async_copy_to(
+                    transmute::<&mut Vec<F>, &mut Vec<u64>>(values_flatten),
+                    &ctx.inner.stream).unwrap();
+                    ctx.inner.stream.synchronize().unwrap();
+                }
 
                 let mut alllen = ext_values_flatten_len;
-                cudart::memory::memory_copy_with_kind(ext_values_flatten, &ext_values_device.index(0..alllen),
-                    cudart::memory::CudaMemoryCopyKind::DeviceToHost).unwrap();
+                // cudart::memory::memory_copy_with_kind(ext_values_flatten, &ext_values_device.index(0..alllen),
+                //     cudart::memory::CudaMemoryCopyKind::DeviceToHost).unwrap();
+                assert!(ext_values_flatten.len() == ext_values_flatten_len);
+                unsafe {
+                    transmute::<&DeviceBuffer<F>, &DeviceBuffer<u64>>(ext_values_device).async_copy_to(
+                    transmute::<&mut Vec<F>, &mut Vec<u64>>(ext_values_flatten),
+                    &ctx.inner.stream).unwrap();
+                    ctx.inner.stream.synchronize().unwrap();
+                }
 
 
                 alllen += pad_extvalues_len;
@@ -339,8 +380,16 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
 
                 unsafe {  fs.set_len(len_with_F);}
                 println!("alllen: {}, digest_and_cap_buf_len: {}, diglen: {}", alllen, len_with_F, digests_and_caps_buf_len);
-                cudart::memory::memory_copy_with_kind(&mut *fs, &ext_values_device.index(alllen..alllen+len_with_F),
-                    cudart::memory::CudaMemoryCopyKind::DeviceToHost).unwrap();
+                // cudart::memory::memory_copy_with_kind(&mut *fs, &ext_values_device.index(alllen..alllen+len_with_F),
+                //     cudart::memory::CudaMemoryCopyKind::DeviceToHost).unwrap();
+                // ext_values_device[alllen..alllen+len_with_F].async_copy_to(fs, ctx.inner.stream).unwrap();
+                unsafe {
+                    transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&ext_values_device[alllen..alllen+len_with_F]).async_copy_to(
+                    transmute::<&mut Vec<F>, &mut Vec<u64>>(fs),
+                    &ctx.inner.stream).unwrap();
+                    ctx.inner.stream.synchronize().unwrap();
+                }
+
                 unsafe {  fs.set_len(len_with_F / 4);}
             }
         );

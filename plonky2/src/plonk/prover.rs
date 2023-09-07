@@ -234,7 +234,7 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
     common_data: &CommonCircuitData<F, D>,
     inputs: PartialWitness<F>,
     timing: &mut TimingTree,
-    ctx: &mut crate::fri::oracle::CudaInvContext<'_, F, C, D>,
+    ctx: &mut crate::fri::oracle::CudaInvContext<F, C, D>,
 ) -> Result<ProofWithPublicInputs<F, C, D>> {
     let config = &common_data.config;
     let num_challenges = config.num_challenges;

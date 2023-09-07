@@ -5,6 +5,7 @@ use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAss
 
 use num::{BigUint, Integer};
 use plonky2_util::{assume, branch_hint};
+use rustacuda::DeviceCopy;
 use serde::{Deserialize, Serialize};
 
 use crate::inversion::try_inverse_u64;
@@ -20,7 +21,7 @@ const EPSILON: u64 = (1 << 32) - 1;
 ///   = 2**64 - 2**32 + 1
 ///   = 2**32 * (2**32 - 1) + 1
 /// ```
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize, DeviceCopy)]
 #[repr(transparent)]
 pub struct GoldilocksField(pub u64);
 
