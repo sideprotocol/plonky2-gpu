@@ -10,6 +10,3 @@ version = "^1.0.70"
 
 [build-dependencies.which]
 version = "^4.0"
-
-[dependencies]
-cudart = { path = "../z-prize-msm-gpu/bellman-cuda-rust/cudart", package = "bellman-cuda-cudart"}

@@ -15,7 +15,6 @@
 // along with the snarkVM library. If not, see <https://www.gnu.org/licenses/>.
 
 extern crate core;
-use cudart;
 
 use std::ffi::{c_char, c_ulong, c_void};
 mod cuda {

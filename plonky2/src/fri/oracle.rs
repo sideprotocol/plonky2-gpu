@@ -32,10 +32,6 @@ use crate::util::timing::TimingTree;
 use crate::util::{log2_strict, reverse_bits, reverse_index_bits_in_place, transpose};
 use plonky2_cuda;
 use plonky2_field::packable::Packable;
-use cudart;
-use cudart::memory::CudaMutSlice;
-use cudart::memory::CudaSlice;
-// use rustacuda::memory::{AsyncCopyDestination, DeviceBuffer, DeviceSlice};
 use rustacuda::prelude::*;
 use rustacuda::memory::{AsyncCopyDestination, DeviceBuffer, DeviceSlice};
 
@@ -43,8 +39,6 @@ use rustacuda::memory::{AsyncCopyDestination, DeviceBuffer, DeviceSlice};
 pub const SALT_SIZE: usize = 4;
 
 pub struct CudaInnerContext {
-    // pub stream: cudart::stream::CudaStream,
-    // pub stream2: cudart::stream::CudaStream,
     pub stream: rustacuda::stream::Stream,
     pub stream2: rustacuda::stream::Stream,
 
@@ -69,11 +63,7 @@ pub struct CudaInvContext<F: RichField + Extendable<D>, C: GenericConfig<D, F = 
     pub root_table_device2: DeviceBuffer::<F>,
     pub shift_powers_device: DeviceBuffer::<F>,
 
-    // pub values_device: cudart::memory::DeviceAllocation::<'a, F>,
-    // pub ext_values_device: cudart::memory::DeviceAllocation::<'a, F>,
-    // pub root_table_device: cudart::memory::DeviceAllocation::<'a, F>,
-    // pub root_table_device2: cudart::memory::DeviceAllocation::<'a, F>,
-    // pub shift_powers_device: cudart::memory::DeviceAllocation::<'a, F>,
+    pub ctx: Context,
 }
 
 /// Represents a FRI oracle, i.e. a batch of polynomials which have been Merklized.
@@ -307,12 +297,6 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         let root_table_device = &mut ctx.root_table_device;
         let root_table_device2 = &mut ctx.root_table_device2;
         let shift_powers_device = &mut ctx.shift_powers_device;
-        // cudart::memory::memory_copy(&mut values_device.index_mut(0..values.len()), values).unwrap();
-        // cudart::memory::memory_copy(&mut values_device.index_mut(0..values.len()), values).unwrap();
-
-        // unsafe {
-        //     DeviceSlice::<F>::async_copy_from(values_device, values, &ctx.inner.stream).unwrap();
-        // }
 
         unsafe {
             transmute::<&mut DeviceBuffer<F>, &mut DeviceBuffer<u64>>(values_device).copy_from(
@@ -351,8 +335,6 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             "copy result",
             {
                 let alllen = values_flatten_len;
-                // cudart::memory::memory_copy_with_kind(values_flatten, &values_device.index(0..alllen),
-                //     cudart::memory::CudaMemoryCopyKind::DeviceToHost).unwrap();
 
                 unsafe {
                     transmute::<&DeviceBuffer<F>, &DeviceBuffer<u64>>(values_device).async_copy_to(
@@ -362,11 +344,9 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 }
 
                 let mut alllen = ext_values_flatten_len;
-                // cudart::memory::memory_copy_with_kind(ext_values_flatten, &ext_values_device.index(0..alllen),
-                //     cudart::memory::CudaMemoryCopyKind::DeviceToHost).unwrap();
                 assert!(ext_values_flatten.len() == ext_values_flatten_len);
                 unsafe {
-                    transmute::<&DeviceBuffer<F>, &DeviceBuffer<u64>>(ext_values_device).async_copy_to(
+                    transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&ext_values_device[0..alllen]).async_copy_to(
                     transmute::<&mut Vec<F>, &mut Vec<u64>>(ext_values_flatten),
                     &ctx.inner.stream).unwrap();
                     ctx.inner.stream.synchronize().unwrap();
@@ -380,9 +360,6 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
 
                 unsafe {  fs.set_len(len_with_F);}
                 println!("alllen: {}, digest_and_cap_buf_len: {}, diglen: {}", alllen, len_with_F, digests_and_caps_buf_len);
-                // cudart::memory::memory_copy_with_kind(&mut *fs, &ext_values_device.index(alllen..alllen+len_with_F),
-                //     cudart::memory::CudaMemoryCopyKind::DeviceToHost).unwrap();
-                // ext_values_device[alllen..alllen+len_with_F].async_copy_to(fs, ctx.inner.stream).unwrap();
                 unsafe {
                     transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&ext_values_device[alllen..alllen+len_with_F]).async_copy_to(
                     transmute::<&mut Vec<F>, &mut Vec<u64>>(fs),

@@ -35,7 +35,6 @@ static_assertions = { version = "1.1.0", default-features = false }
 unroll = { version = "0.1.5", default-features = false }
 
 plonky2_cuda = {path = "../cuda"}
-cudart = { path = "../z-prize-msm-gpu/bellman-cuda-rust/cudart", package = "bellman-cuda-cudart"}
 rustacuda = "0.1.3"
 rustacuda_core = "0.1.2"
 
