@@ -46,6 +46,48 @@ void test()
     auto out =  *(PoseidonHasher::HashOut*)state;
     PRINT_HEX("hash", out);
 }
+
+template <class T>
+std::vector<T> read_vec_from_bin(std::string filename) {
+    std::vector<T> res;
+    std::ifstream file(filename, std::ios::binary);
+
+    // 获取文件大小
+    file.seekg(0, std::ios::end);
+    std::streampos fileSize = file.tellg();
+    file.seekg(0, std::ios::beg);
+
+    // 根据文件大小调整vector容量
+    res.resize(fileSize / sizeof(T));
+
+    // 从文件中读取数据到vector
+    file.read(reinterpret_cast<char*>(res.data()), fileSize);
+    return res;
+};
+
+//auto read_hvec_from_bin = [](std::string filename) -> std::vector<PoseidonHasher::HashOut>{
+//    std::vector<PoseidonHasher::HashOut> res;
+//    std::ifstream file(filename, std::ios::binary);
+//
+//    // 获取文件大小
+//    file.seekg(0, std::ios::end);
+//    std::streampos fileSize = file.tellg();
+//    file.seekg(0, std::ios::beg);
+//
+//    // 根据文件大小调整vector容量
+//    res.resize(fileSize / sizeof(PoseidonHasher::HashOut));
+//
+//    // 从文件中读取数据到vector
+//    file.read(reinterpret_cast<char*>(res.data()), fileSize);
+//    return res;
+//}
+
+template <class T>
+struct DataSlice{
+    T* ptr;
+    int len;
+};
+
 int main()
 {
     cudaStream_t stream;
@@ -71,68 +113,15 @@ int main()
 
     double ifft_kernel_use, lde_kernel_use, mul_shift_kernel_use, fft_kernel_use, reverse_index_bits_kernel_use,
                 hash_leaves_kernel_use, reduce_digests_kernel_use, transpose_kernel_use;
-    std::vector<GoldilocksField> values_flatten, root_table, root_table2, shift_powers;
 
-    {
-        std::ifstream file("values.bin", std::ios::binary);
-//        std::ifstream file("zs_partial_products.bin", std::ios::binary);
-        // 获取文件大小
-        file.seekg(0, std::ios::end);
-        std::streampos fileSize = file.tellg();
-        file.seekg(0, std::ios::beg);
+#define  read_fvec_from_bin read_vec_from_bin<GoldilocksField>
+#define  read_hvec_from_bin read_vec_from_bin<PoseidonHasher::HashOut>
 
-        // 根据文件大小调整vector容量
-        values_flatten.resize(fileSize / sizeof(GoldilocksField));
+    auto values_flatten = read_fvec_from_bin("values.bin");
+    auto root_table  = read_fvec_from_bin("roots.bin");
+    auto root_table2 = read_fvec_from_bin("roots2.bin");
+    auto shift_powers = read_fvec_from_bin("powers.bin");
 
-        // 从文件中读取数据到vector
-        file.read(reinterpret_cast<char*>(values_flatten.data()), fileSize);
-
-//        assert(values_flatten.size() == poly_num * values_num_per_poly);
-    }
-
-    {
-        std::ifstream file("roots.bin", std::ios::binary);
-
-        // 获取文件大小
-        file.seekg(0, std::ios::end);
-        std::streampos fileSize = file.tellg();
-        file.seekg(0, std::ios::beg);
-
-        // 根据文件大小调整vector容量
-        root_table.resize(fileSize / sizeof(GoldilocksField));
-
-        // 从文件中读取数据到vector
-        file.read(reinterpret_cast<char*>(root_table.data()), fileSize);
-    }
-    {
-        std::ifstream file("roots2.bin", std::ios::binary);
-
-        // 获取文件大小
-        file.seekg(0, std::ios::end);
-        std::streampos fileSize = file.tellg();
-        file.seekg(0, std::ios::beg);
-
-        // 根据文件大小调整vector容量
-        root_table2.resize(fileSize / sizeof(GoldilocksField));
-
-        // 从文件中读取数据到vector
-        file.read(reinterpret_cast<char*>(root_table2.data()), fileSize);
-    }
-
-    {
-        std::ifstream file("powers.bin", std::ios::binary);
-
-        // 获取文件大小
-        file.seekg(0, std::ios::end);
-        std::streampos fileSize = file.tellg();
-        file.seekg(0, std::ios::beg);
-
-        // 根据文件大小调整vector容量
-        shift_powers.resize(fileSize / sizeof(GoldilocksField));
-
-        // 从文件中读取数据到vector
-        file.read(reinterpret_cast<char*>(shift_powers.data()), fileSize);
-    }
 
 //    auto originalVector = values_flatten;
 //    values_flatten.insert(values_flatten.end(), originalVector.begin(), originalVector.end());
@@ -237,22 +226,6 @@ int main()
     cudaStreamSynchronize(stream);
     printf("mul_shift_kernel elapsed: %.2lf\n", mul_shift_kernel_use=(double )(clock()-start) / CLOCKS_PER_SEC * 1000);
 
-//        if (poly_num == 20)
-//        {
-//            std::vector<GoldilocksField> data(values_num_per_poly+100);
-//            CUDA_ASSERT(cudaMemcpyAsync(&data[0], d_ext_values_flatten,  data.size()*sizeof(GoldilocksField),
-//                                        cudaMemcpyDeviceToHost, stream));
-//            cudaStreamSynchronize(stream);
-//            for (int i = 0; i < data.size(); ++i) {
-//                if (i < values_num_per_poly)
-//                    printf("first i: %d, val:%016lX\n", i, data[i].data);
-//                else
-//                    printf("second i: %d, val:%016lX\n", i, data[i].data);
-//            }
-//
-//        }
-
-
     start = clock();
     fft_kernel<<<poly_num, 32*8, 0, stream>>>(d_ext_values_flatten, poly_num, values_num_per_poly*(1<<rate_bits), log_len+rate_bits, d_root_table2, rate_bits);
     cudaStreamSynchronize(stream);
@@ -342,5 +315,108 @@ int main()
             transpose_kernel_use;
 
     printf("total use:%.2lf\n", total_use);
+
+    uint8_t *start_p = (uint8_t*)d_ext_values_flatten;
+    uint8_t *end_p   = (uint8_t*)(d_ext_values_flatten+values_num_per_extpoly*ext_poly_num);
+//    {
+//        std::vector<GoldilocksField> data;
+//        uint8_t *old_p;
+//        DataSlice<std::remove_reference<decltype(data[0])>::type>{(decltype(&data[0])) old_p, (int)data.size()};
+//    }
+//    std::remove_reference<decltype(data2[0])>::type asdf;
+
+#define DO_MEMCPY_TODEV(data) \
+            int cpylen = data.size() * sizeof(data[0]);                  \
+            CUDA_ASSERT(cudaMemcpyAsync(start_p, &data[0],  cpylen, cudaMemcpyHostToDevice, stream)); \
+            uint8_t *old_p = start_p; \
+            start_p += cpylen;\
+            assert(start_p < end_p);                  \
+            DataSlice<std::remove_reference<decltype(data[0])>::type>{(decltype(&data[0])) old_p, (int)data.size()};
+
+#define  read_fvec_to_dev(fname) \
+    ({                             \
+        auto data = read_vec_from_bin<GoldilocksField>(fname); \
+        DO_MEMCPY_TODEV(data)                             \
+    })
+
+#define  read_hvec_to_dev(fname) \
+    ({                             \
+        auto data = read_vec_from_bin<PoseidonHasher::HashOut>(fname); \
+        DO_MEMCPY_TODEV(data)                             \
+    })
+
+    auto zs_partial_products_commitment_polynomials = read_fvec_to_dev("zs_partial_products_commitment.polynomials.bin");
+    auto zs_partial_products_commitment_leaves      = read_fvec_to_dev("zs_partial_products_commitment.leaves.bin");
+    auto zs_partial_products_commitment_digests     = read_hvec_to_dev("zs_partial_products_commitment.digests.bin");
+    auto zs_partial_products_commitment_caps        = read_hvec_to_dev("zs_partial_products_commitment.caps.bin");
+
+    auto constants_sigmas_commitment_polynomials    = read_fvec_to_dev("constants_sigmas_commitment.polynomials.bin");
+    auto constants_sigmas_commitment_leaves         = read_fvec_to_dev("constants_sigmas_commitment.leaves.bin");
+    auto constants_sigmas_commitment_digests        = read_hvec_to_dev("constants_sigmas_commitment.digests.bin");
+    auto constants_sigmas_commitment_caps           = read_hvec_to_dev("constants_sigmas_commitment.caps.bin");
+
+    auto k_is = read_fvec_to_dev("k_is.bin");
+    auto alphas = read_fvec_to_dev("alphas.bin");
+    auto betas = read_fvec_to_dev("betas.bin");
+    auto gammas = read_fvec_to_dev("gammas.bin");
+    auto points = read_fvec_to_dev("points.bin");
+    auto z_h_on_coset_evals = read_fvec_to_dev("z_h_on_coset.evals.bin");
+    auto z_h_on_coset_inverses = read_fvec_to_dev("z_h_on_coset.inverses.bin");
+
+    GoldilocksField *d_outs;
+    CUDA_ASSERT(cudaMalloc(&d_outs, values_num_per_extpoly*2*sizeof(GoldilocksField)));
+
+    cudaStreamSynchronize(stream);
+    size_t total_dev_use = start_p-(uint8_t*)d_ext_values_flatten;
+    printf("total_dev_use: %fG\n", (double )total_dev_use/1024/1024/1024);
+
+    int num_challenges = 2;
+    int num_gate_constraints = 231;
+    int num_constants = 8;
+    int num_routed_wires = 80;
+    int quotient_degree_factor = 8;
+    int num_partial_products = 9;
+    int constants_sigmas_commitment_leaf_len = 88;
+    int zs_partial_products_commitment_leaf_len = 20;
+    int wires_commitment_leaf_len = 234;
+
+//    printf("%d, %d\n", constants_sigmas_commitment_leaves.len, values_num_per_extpoly*constants_sigmas_commitment_leaf_len);
+    assert(constants_sigmas_commitment_leaves.len    == values_num_per_extpoly*constants_sigmas_commitment_leaf_len);
+    assert(zs_partial_products_commitment_leaves.len == values_num_per_extpoly*zs_partial_products_commitment_leaf_len);
+    assert(points.len == values_num_per_extpoly);
+    assert(alphas.len == num_challenges);
+    assert(betas.len == num_challenges);
+    assert(gammas.len == num_challenges);
+
+    start = clock();
+    thcnt = 15000;
+    nthreads = 32;
+    printf("values_num_per_extpoly: %d, log_len: %d\n", values_num_per_extpoly, log_len);
+    compute_quotient_values_kernel<<<(thcnt+nthreads-1)/nthreads, nthreads, 0, stream>>>(
+            log_len, rate_bits,
+            points.ptr,
+            d_outs,
+
+            constants_sigmas_commitment_leaves.ptr,     constants_sigmas_commitment_leaf_len,
+            zs_partial_products_commitment_leaves.ptr,  zs_partial_products_commitment_leaf_len,
+            d_ext_values_flatten - pad_extvalues_len,                wires_commitment_leaf_len,
+            num_constants, num_routed_wires,
+            num_challenges,
+            num_gate_constraints,
+
+            quotient_degree_factor,
+            num_partial_products,
+
+            z_h_on_coset_evals.ptr,
+            z_h_on_coset_inverses.ptr,
+
+            k_is.ptr,
+            alphas.ptr,
+            betas.ptr,
+            gammas.ptr
+    );
+    cudaStreamSynchronize(stream);
+    printf("compute_quotient_values_kernel elapsed: %.2lf\n", (double )(clock()-start) / CLOCKS_PER_SEC * 1000);
+
     return 0;
 }

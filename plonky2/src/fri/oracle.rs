@@ -57,8 +57,10 @@ pub struct CudaInvContext<F: RichField + Extendable<D>, C: GenericConfig<D, F = 
     pub values_flatten2     :Arc<Vec<F>>,
     pub digests_and_caps_buf2 :Arc<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>,
 
-    pub values_device: DeviceBuffer::<F>,
-    pub ext_values_device: DeviceBuffer::<F>,
+    // pub values_device: DeviceBuffer::<F>,
+    // pub ext_values_device: DeviceBuffer::<F>,
+    pub cache_mem_device: DeviceBuffer::<F>,
+
     pub root_table_device: DeviceBuffer::<F>,
     pub root_table_device2: DeviceBuffer::<F>,
     pub shift_powers_device: DeviceBuffer::<F>,
@@ -292,14 +294,15 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 =  Arc::<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>::get_mut(&mut ctx.digests_and_caps_buf2).unwrap();
         }
 
-        let values_device = &mut ctx.values_device;
-        let ext_values_device = &mut ctx.ext_values_device;
+        let (values_device, ext_values_device) = ctx.cache_mem_device.split_at_mut(values_flatten_len);
+        // let values_device = &mut ctx.cache_mem_device[0..values_flatten_len];
+        // let ext_values_device = &mut ctx.cache_mem_device[values_flatten_len..];
         let root_table_device = &mut ctx.root_table_device;
         let root_table_device2 = &mut ctx.root_table_device2;
         let shift_powers_device = &mut ctx.shift_powers_device;
 
         unsafe {
-            transmute::<&mut DeviceBuffer<F>, &mut DeviceBuffer<u64>>(values_device).copy_from(
+            transmute::<&mut DeviceSlice<F>, &mut DeviceSlice<u64>>(values_device).copy_from(
                 transmute::<&Vec<F>, &Vec<u64>>(values),
                 // &ctx.inner.stream
             ).unwrap();
@@ -337,7 +340,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 let alllen = values_flatten_len;
 
                 unsafe {
-                    transmute::<&DeviceBuffer<F>, &DeviceBuffer<u64>>(values_device).async_copy_to(
+                    transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(values_device).async_copy_to(
                     transmute::<&mut Vec<F>, &mut Vec<u64>>(values_flatten),
                     &ctx.inner.stream).unwrap();
                     ctx.inner.stream.synchronize().unwrap();
@@ -715,7 +718,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
     /// Fetches LDE values at the `index * step`th point.
     pub fn get_lde_values(&self, index: usize, step: usize) -> &[F] {
         let index = index * step;
-        let index = reverse_bits(index, self.degree_log + self.rate_bits);
+            let index = reverse_bits(index, self.degree_log + self.rate_bits);
         let slice = {
             if self.merkle_tree.my_leaves.is_empty() {
                 self.merkle_tree.leaves[index].as_slice()

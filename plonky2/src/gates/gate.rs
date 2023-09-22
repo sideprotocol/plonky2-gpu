@@ -63,7 +63,6 @@ pub trait Gate<F: RichField + Extendable<D>, const D: usize>: 'static + Send + S
             public_inputs_hash,
         };
         let values = self.eval_unfiltered(vars);
-
         // Each value should be in the base field, i.e. only the degree-zero part should be nonzero.
         values.into_iter().for_each(|value| {
             debug_assert!(F::Extension::is_in_basefield(&value));

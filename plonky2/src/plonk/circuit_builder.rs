@@ -1245,7 +1245,6 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilder<F, D> {
             ],
         ];
         let circuit_digest = C::Hasher::hash_no_pad(&circuit_digest_parts.concat());
-
         let common = CommonCircuitData {
             config: self.config,
             fri_params,

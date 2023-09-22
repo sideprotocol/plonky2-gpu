@@ -35,6 +35,12 @@
     printf("\n");							\
   }while(0)
 
+typedef uint32_t u32;
+typedef uint64_t u64;
+typedef unsigned __int128 u128;
+typedef __int128 i128;
+
+
 static inline __device__ int get_global_id() {
     const int gid = threadIdx.x + blockIdx.x * blockDim.x;
     return gid;
@@ -62,8 +68,6 @@ struct __align__(8) bytes_pad_type {
 
 #define BYTES_ASSIGN(dst, src, len)  \
         *(bytes_pad_type<len>*)(dst) = *(bytes_pad_type<len>*)(src)
-
-typedef unsigned __int128 u128;
 
 #if 0
 class u128 {
@@ -161,11 +165,23 @@ public:
 
 struct  GoldilocksField{
     uint64_t data;
+    static const uint64_t TWO_ADICITY = 32;
+    static const uint64_t CHARACTERISTIC_TWO_ADICITY= TWO_ADICITY;
+
     static const uint64_t ORDER = 0xFFFFFFFF00000001;
+
+    __device__ inline
+    static const GoldilocksField coset_shift() {
+        return GoldilocksField{7};
+    }
 
     __device__ inline GoldilocksField square() const {
         return (*this) * (*this);
     }
+    __device__ inline GoldilocksField sub_one() {
+        return (*this) - from_canonical_u64(1);
+    }
+
     __device__ inline uint64_t to_noncanonical_u64() const{
         return this->data;
     }
@@ -182,6 +198,196 @@ struct  GoldilocksField{
 
     static __device__ inline GoldilocksField  from_noncanonical_u128(u128 n) {
         return reduce128(n >> 64, n & UINT64_MAX);
+    }
+
+    __device__ inline GoldilocksField inverse() const {
+        u64 f = this->data;
+        u64 g = GoldilocksField::ORDER;
+        // NB: These two are very rarely such that their absolute
+        // value exceeds (p-1)/2; we are paying the price of i128 for
+        // the whole calculation, just for the times they do
+        // though. Measurements suggest a further 10% time saving if c
+        // and d could be replaced with i64's.
+        i128 c = 1;
+        i128 d = 0;
+
+//        assert (f != 0);
+
+        auto trailing_zeros = [](uint64_t n) -> int{
+            int count = 0;
+            while ((n & 1) == 0) {
+                n >>= 1;
+                count++;
+            }
+            return count;
+        };
+
+
+// f and g must always be odd.
+        u32  k = trailing_zeros(f);
+        f >>= k;
+        if (f == 1) {
+            return GoldilocksField::inverse_2exp(k);
+        }
+
+        // The first two iterations are unrolled. This is to handle
+        // the case where f and g are both large and f+g can
+        // overflow. log2(max{f,g}) goes down by at least one each
+        // iteration though, so after two iterations we can be sure
+        // that f+g won't overflow.
+        auto swap = [](auto& a, auto& b) {
+            auto temp = a;
+            a = b;
+            b = temp;
+        };
+
+        auto safe_iteration = [trailing_zeros, swap](u64& f, u64& g, i128& c, i128& d, u32& k) {
+            if (f < g) {
+                swap(f, g);
+                swap(c, d);
+            }
+            if ((f & 3) == (g & 3)) {
+                // f - g = 0 (mod 4)
+                f -= g;
+                c -= d;
+
+                // kk >= 2 because f is now 0 (mod 4).
+                auto kk = trailing_zeros(f);
+                f >>= kk;
+                d <<= kk;
+                k += kk;
+            } else {
+                // f + g = 0 (mod 4)
+                f = (f >> 2) + (g >> 2) + 1ULL;
+                c += d;
+                auto kk = trailing_zeros(f);
+                f >>= kk;
+                d <<= kk + 2;
+                k += kk + 2;
+            }
+        };
+
+        // Iteration 1:
+        safe_iteration(f, g, c, d, k);
+
+        if (f == 1) {
+            // c must be -1 or 1 here.
+            if (c == -1) {
+                return -GoldilocksField::inverse_2exp(k);
+            }
+            assert(c == 1);
+            return GoldilocksField::inverse_2exp(k);
+        }
+
+        // Iteration 2:
+        safe_iteration(f, g, c, d, k);
+
+
+        auto unsafe_iteration = [trailing_zeros, swap](u64& f, u64& g, i128& c, i128& d, u32& k) {
+            if (f < g) {
+                swap(f, g);
+                swap(c, d);
+            }
+            if ((f & 3) == (g & 3)) {
+                // f - g = 0 (mod 4)
+                f -= g;
+                c -= d;
+            } else {
+                // f + g = 0 (mod 4)
+                f += g;
+                c += d;
+            }
+
+            // kk >= 2 because f is now 0 (mod 4).
+            auto kk = trailing_zeros(f);
+            f >>= kk;
+            d <<= kk;
+            k += kk;
+        };
+
+        // Remaining iterations:
+        while (f != 1) {
+            unsafe_iteration(f, g, c, d, k);
+        }
+
+        // The following two loops adjust c so it's in the canonical range
+        // [0, F::ORDER).
+
+        // The maximum number of iterations observed here is 2; should
+        // prove this.
+        while (c < 0) {
+            c += i128(GoldilocksField::ORDER);
+        }
+
+        // The maximum number of iterations observed here is 1; should
+        // prove this.
+        while (c >= i128(GoldilocksField::ORDER)) {
+            c -= i128(GoldilocksField::ORDER);
+        }
+
+        // Precomputing the binary inverses rather than using inverse_2exp
+        // saves ~5ns on my machine.
+        auto res = GoldilocksField::from_canonical_u64(u64(c)) * GoldilocksField::inverse_2exp(u64(k));
+//        assert(*this * res == GoldilocksField::from_canonical_u64(1));
+        return res;
+    }
+
+
+    __device__ inline GoldilocksField inverse_2exp(u64 exp) const {
+        // Let p = char(F). Since 2^exp is in the prime subfield, i.e. an
+        // element of GF_p, its inverse must be as well. Thus we may add
+        // multiples of p without changing the result. In particular,
+        // 2^-exp = 2^-exp - p 2^-exp
+        //        = 2^-exp (1 - p)
+        //        = p - (p - 1) / 2^exp
+
+        // If this field's two adicity, t, is at least exp, then 2^exp divides
+        // p - 1, so this division can be done with a simple bit shift. If
+        // exp > t, we repeatedly multiply by 2^-t and reduce exp until it's in
+        // the right range.
+
+//        if let Some(p) = Self::characteristic().to_u64() {
+        if (true) {
+            auto p = GoldilocksField::ORDER;
+            // NB: The only reason this is split into two cases is to save
+            // the multiplication (and possible calculation of
+            // inverse_2_pow_adicity) in the usual case that exp <=
+            // TWO_ADICITY. Can remove the branch and simplify if that
+            // saving isn't worth it.
+
+            if (exp > GoldilocksField::CHARACTERISTIC_TWO_ADICITY) {
+                // NB: This should be a compile-time constant
+                auto inverse_2_pow_adicity =
+                        GoldilocksField::from_canonical_u64(p - ((p - 1) >> GoldilocksField::CHARACTERISTIC_TWO_ADICITY));
+
+                auto res = inverse_2_pow_adicity;
+                auto e = exp - GoldilocksField::CHARACTERISTIC_TWO_ADICITY;
+
+                while (e > GoldilocksField::CHARACTERISTIC_TWO_ADICITY) {
+                    res *= inverse_2_pow_adicity;
+                    e -= GoldilocksField::CHARACTERISTIC_TWO_ADICITY;
+                }
+                return res * GoldilocksField::from_canonical_u64(p - ((p - 1) >> e));
+            } else {
+                return GoldilocksField::from_canonical_u64(p - ((p - 1) >> exp));
+            }
+        } else {
+            return GoldilocksField::from_canonical_u64(2).inverse().exp_u64(exp);
+        }
+    }
+
+    __device__ inline
+    GoldilocksField exp_u64(u64 power) const {
+        auto current = *this;
+        auto product = GoldilocksField::from_canonical_u64(1);
+
+        for (int j = 0; j < 64; ++j) {
+            if (((power >> j) & 1) != 0) {
+                product *= current;
+            }
+            current = current.square();
+        }
+        return product;
     }
 
     __device__ inline
@@ -276,6 +482,15 @@ struct  GoldilocksField{
         *this = *this + rhs;
         return *this;
     }
+    __device__ inline
+    bool operator==(const GoldilocksField& rhs) {
+        return rhs.data == this->data;
+    }
+
+    __device__ inline
+    GoldilocksField operator-() {
+        return GoldilocksField{-this->data};
+    }
 
     __device__ inline
     GoldilocksField multiply_accumulate(GoldilocksField x, GoldilocksField y) {
@@ -293,24 +508,20 @@ struct  GoldilocksField{
 
 #include "constants.cuh"
 
+template<class T1, class T2>
+struct my_pair {
+    T1 first;
+    T2 second;
+    __device__ inline my_pair(const T1& t1, const T2& t2)
+            :first(t1), second(t2)
+    {
+    }
+};
 
 
 struct PoseidonHasher {
-    typedef uint32_t u32;
-    typedef uint64_t u64;
-
     struct HashOut {
         GoldilocksField elements[4] ;
-    };
-
-    template<class T1, class T2>
-    struct my_pair {
-        T1 first;
-        T2 second;
-        __device__ inline my_pair(const T1& t1, const T2& t2)
-        :first(t1), second(t2)
-        {
-        }
     };
 
     static __device__ inline my_pair<u128, u32> add_u160_u128(my_pair<u128, u32> pa, u128 y) {
@@ -342,7 +553,7 @@ struct PoseidonHasher {
     static __device__ inline void print_state(const char* promt, GoldilocksField* state) {
         printf("%s: [", promt);
         for (int i = 0; i < 12; ++i) {
-            printf("%lu%s", state[i], i == 11?"]\n":", ");
+            printf("%lu%s", state[i].data, i == 11?"]\n":", ");
         }
     }
     static __device__ inline
@@ -1002,6 +1213,264 @@ void transpose_kernel(GoldilocksField* src_values_flatten, GoldilocksField* dst_
 
         *dst_value = *src_value;
     }
+}
+
+__global__
+void compute_quotient_values_kernel(
+        int degree_log, int rate_bits, GoldilocksField* points, GoldilocksField* outs,
+        GoldilocksField* constants_sigmas_commitment_leaves,     int constants_sigmas_commitment_leaf_len,
+        GoldilocksField* zs_partial_products_commitment_leaves,  int zs_partial_products_commitment_leaf_len,
+        GoldilocksField* wires_commitment_leaves,                int wires_commitment_leaf_len,
+        int num_constants, int num_routed_wires,
+        int _num_challenges,
+        int num_gate_constraints,
+
+        int quotient_degree_factor,
+        int num_partial_products,
+
+        GoldilocksField* z_h_on_coset_evals,
+        GoldilocksField* z_h_on_coset_inverses,
+
+        GoldilocksField* k_is,
+        GoldilocksField* alphas,
+        GoldilocksField* betas,
+        GoldilocksField* gammas
+
+)
+{
+    constexpr int num_challenges = 2;
+    int thCnt = get_global_thcnt();
+    int gid = get_global_id();
+
+    int step = 1;
+    int next_step = 8;
+    int values_num_per_extpoly = (1<<(rate_bits+degree_log));
+//    int values_num_per_extpoly = 1;
+    int lde_size  = values_num_per_extpoly;
+
+    struct GoldilocksFieldSlice {
+        GoldilocksField* ptr;
+        int len;
+
+        __device__ inline
+        GoldilocksFieldSlice slice(int start, int end) const {
+            return GoldilocksFieldSlice{this->ptr + start, end-start};
+        }
+        __device__ inline
+        GoldilocksFieldSlice slice(int start) const {
+            return GoldilocksFieldSlice{this->ptr + start, this->len-start};
+        }
+
+        __device__ inline
+        GoldilocksField& operator[](int index) {
+            return this->ptr[index];
+        }
+        __device__ inline
+        const GoldilocksField& operator[](int index) const {
+            return this->ptr[index];
+        }
+
+    };
+
+    int max_degree = quotient_degree_factor;
+    int num_prods = num_partial_products;
+
+    auto get_lde_values = [degree_log, rate_bits](GoldilocksField* leaves, int leaf_len, int i, int step) -> GoldilocksFieldSlice {
+        int index = i * step;
+        index = bitrev(index, degree_log+rate_bits);
+        return GoldilocksFieldSlice{&leaves[index*leaf_len], leaf_len};
+    };
+
+    for (int index = gid; index < values_num_per_extpoly; index += thCnt) {
+        auto x = points[index];
+        GoldilocksField shifted_x = GoldilocksField::coset_shift() * x;
+        int i_next = (index + next_step) % lde_size;
+        auto local_constants_sigmas = get_lde_values(constants_sigmas_commitment_leaves, constants_sigmas_commitment_leaf_len, index, step);
+
+        auto local_constants = local_constants_sigmas.slice(0, num_constants);
+        auto s_sigmas = local_constants_sigmas.slice(num_constants, num_constants+num_routed_wires);
+        auto local_wires = get_lde_values(wires_commitment_leaves, wires_commitment_leaf_len, index, step);
+        auto local_zs_partial_products = get_lde_values(zs_partial_products_commitment_leaves, zs_partial_products_commitment_leaf_len, index, step);
+        auto local_zs = local_zs_partial_products.slice(0, num_challenges);
+        auto next_zs = get_lde_values(zs_partial_products_commitment_leaves, zs_partial_products_commitment_leaf_len, i_next, step).slice(0, num_challenges);
+
+        auto partial_products = local_zs_partial_products.slice(num_challenges);
+
+
+//        let constraint_terms_batch =
+//        evaluate_gate_constraints_base_batch::<F, C, D>(common_data, vars_batch);
+
+        assert(num_routed_wires % max_degree == 0);
+
+//        let constraint_terms = PackedStridedView::new(&constraint_terms_batch, n, k);
+
+        auto eval_l_0 = [z_h_on_coset_evals, rate_bits, degree_log](int index, GoldilocksField x) -> GoldilocksField {
+//            return z_h_on_coset_evals[index%rate_bits] * (GoldilocksField::from_canonical_u64(1<<degree_log) * (x - GoldilocksField{1})).inverse();
+            return z_h_on_coset_evals[index%rate_bits] * (GoldilocksField::from_canonical_u64(1<<degree_log) * (x - GoldilocksField{1}));
+        };
+        GoldilocksField res[num_challenges];
+
+        auto reduce_with_powers = [&res, &alphas, num_challenges](GoldilocksField term) {
+            for (int i = 0; i < num_challenges; ++i) {
+                res[i] = term + res[i] * alphas[i];
+            }
+        };
+
+        auto l_0_x = eval_l_0(index, x);
+        for (int i = 0; i < num_challenges; ++i) {
+            auto z_x = local_zs[i];
+            res[0] = GoldilocksField::from_canonical_u64(0);
+            reduce_with_powers(l_0_x * z_x.sub_one());
+        }
+
+        for (int i = 0; i < num_challenges; ++i) {
+            auto z_x = local_zs[i];
+            auto z_gx = next_zs[i];
+
+            // The partial products considered for this iteration of `i`.
+            auto current_partial_products = partial_products.slice(i * num_prods, (i + 1) * num_prods);
+            // Check the numerator partial products.
+//            let partial_product_checks = check_partial_products(
+//                    &numerator_values,
+//                    &denominator_values,
+//                    current_partial_products,
+//                    z_x,
+//                    z_gx,
+//                    max_degree,
+//            );
+
+            GoldilocksField prev_acc, next_acc;
+            assert(current_partial_products.len == num_routed_wires/max_degree-1);
+            for (int k = 0; k < num_routed_wires/max_degree; ++k) {
+                GoldilocksField num_chunk_product = GoldilocksField::from_canonical_u64(1);
+                for (int j = 0; j < max_degree; ++j) {
+                    auto wire_value = local_wires[j];
+                    auto k_i = k_is[j];
+                    auto s_id = k_i * x;
+                    num_chunk_product *= wire_value + betas[i] * s_id + gammas[i];
+                }
+
+                GoldilocksField den_chunk_product = GoldilocksField::from_canonical_u64(1);
+                for (int j = 0; j < max_degree; ++j) {
+                    auto wire_value = local_wires[j];
+                    auto s_sigma = s_sigmas[j];
+                    den_chunk_product *= wire_value + betas[i] * s_sigma + gammas[i];
+                }
+                if (k == 0) {
+                    prev_acc = z_x;
+                } else {
+                    prev_acc = next_acc;
+                }
+
+                if (k == num_routed_wires/max_degree-1)
+                    next_acc = z_gx;
+                else
+                    next_acc = current_partial_products[k];
+
+                reduce_with_powers(prev_acc * num_chunk_product - next_acc * den_chunk_product);
+            }
+        }
+
+        struct SelectorsInfo {
+            int *selector_indices;
+            my_pair<int, int>* groups;
+        };
+
+        int selector_indices[25] = {
+                0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4, 5
+        };
+
+        constexpr  int num_selectors = 6;
+        my_pair<int, int> groups[num_selectors] = {
+                my_pair<int, int>{0,6},
+                my_pair<int, int>{6,11},
+                my_pair<int, int>{11,16},
+                my_pair<int, int>{16,21},
+                my_pair<int, int>{21,24},
+                my_pair<int, int>{24,25}
+        };
+        SelectorsInfo selectors_info = {
+                .selector_indices = selector_indices,
+                .groups = groups
+        };
+
+        GoldilocksField constraints_batch[num_gate_constraints];
+        auto evaluate_gate_constraints_base_batch = [&constraints_batch, selectors_info, local_constants]() {
+            int num_gates = 1;
+            for (int row = 0; row < num_gates; ++row) {
+                int selector_index = selectors_info.selector_indices[row];
+
+
+                auto compute_filter = [](int row, my_pair<int, int> group_range, GoldilocksField s, bool many_selector) -> GoldilocksField {
+//                        debug_assert!(group_range.contains(&row));
+                        GoldilocksField res = {1};
+                        for (int i = group_range.first; i < group_range.second; ++i) {
+                            if (i == row)
+                                continue;
+                            res *= GoldilocksField::from_canonical_u64(i) - s;
+                        }
+
+                    const uint32_t UNUSED_SELECTOR = UINT32_MAX;
+
+                    if (many_selector) {
+                        res *= GoldilocksField::from_canonical_u64(UNUSED_SELECTOR) - s;
+                    }
+                };
+
+                auto filter = compute_filter(
+                    row,
+                    selectors_info.groups[selector_index],
+                    local_constants[selector_index],
+                    num_selectors > 1
+                );
+
+                auto local_constants2 = local_constants.slice(num_selectors, local_constants.len);
+
+//                let mut res_batch = self.eval_unfiltered_base_batch(vars_batch);
+//                for res_chunk in res_batch.chunks_exact_mut(filters.len()) {
+//                    batch_multiply_inplace(res_chunk, &filters);
+//                }
+//                res_batch
+
+
+//                let gate_constraints_batch = gate.0.eval_filtered_base_batch(
+//                        vars_batch,
+//                        i,
+//                        selector_index,
+//                        common_data.selectors_info.groups[selector_index].clone(),
+//                        common_data.selectors_info.num_selectors(),
+//                );
+//                assert(
+//                        gate_constraints_batch.len() <= constraints_batch.len(),
+//                                "num_constraints() gave too low of a number"
+//                );
+
+                // below adds all constraints for all points
+
+//                batch_add_inplace(
+//                        &mut constraints_batch[..gate_constraints_batch.len()],
+//                &gate_constraints_batch,
+//                );
+
+            }
+        };
+
+        evaluate_gate_constraints_base_batch();
+
+        for (int i = 0; i < num_gate_constraints; ++i) {
+            reduce_with_powers(constraints_batch[i]);
+        }
+
+
+        auto denominator_inv = z_h_on_coset_inverses[index % rate_bits];
+        for (int i = 0; i < num_challenges; ++i) {
+            res[i] *= denominator_inv;
+        }
+
+        outs[index*2]   = res[0];
+        outs[index*2+1] = res[1];
+    }
+
 }
 
 #endif

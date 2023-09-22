@@ -423,7 +423,6 @@ pub trait Poseidon: PrimeField64 {
                 result[i] = state[i].multiply_accumulate(state[0], t);
             }
         }
-        // println!("state 22: {:?}", result);
         result
     }
 

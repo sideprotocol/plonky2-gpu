@@ -619,6 +619,58 @@ fn compute_quotient_polys<
     let lde_size = points.len();
 
     let z_h_on_coset = ZeroPolyOnCoset::new(common_data.degree_bits(), quotient_degree_bits);
+    println!("z_h_on_coset, n: {}, rate: {}", z_h_on_coset.n, z_h_on_coset.rate);
+    println!("step: {}, next_step: {}, lde_size: {}", step, next_step, lde_size);
+    // unsafe {
+    //     let mut file = File::create("zs_partial_products_commitment.polynomials.bin").unwrap();
+    //     for value in zs_partial_products_commitment.polynomials.iter().flat_map(|v| v.coeffs.clone()) {
+    //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(&value)).unwrap();
+    //     }
+    //     let mut file = File::create("zs_partial_products_commitment.leaves.bin").unwrap();
+    //     for value in zs_partial_products_commitment.merkle_tree.leaves.concat() {
+    //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(&value)).unwrap();
+    //     }
+    //     let mut file = File::create("zs_partial_products_commitment.digests.bin").unwrap();
+    //     for value in zs_partial_products_commitment.merkle_tree.digests.iter() {
+    //         file.write_all(std::mem::transmute::<&_, &[u8; 32]>(value)).unwrap();
+    //     }
+    //     let mut file = File::create("zs_partial_products_commitment.caps.bin").unwrap();
+    //     for value in zs_partial_products_commitment.merkle_tree.cap.0.iter() {
+    //         file.write_all(std::mem::transmute::<&_, &[u8; 32]>(value)).unwrap();
+    //     }
+    //
+    //     let mut file = File::create("betas.bin").unwrap();
+    //     for value in betas {
+    //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
+    //     }
+    //     let mut file = File::create("gammas.bin").unwrap();
+    //     for value in betas {
+    //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
+    //     }
+    //     let mut file = File::create("k_is.bin").unwrap();
+    //     for value in common_data.k_is.iter() {
+    //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
+    //     }
+    //
+    //     let mut file = File::create("alphas.bin").unwrap();
+    //     for value in betas {
+    //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
+    //     }
+    //
+    //     let mut file = File::create("points.bin").unwrap();
+    //     for value in points.iter() {
+    //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
+    //     }
+    //
+    //     let mut file = File::create("z_h_on_coset.evals.bin").unwrap();
+    //     for value in z_h_on_coset.evals.iter() {
+    //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
+    //     }
+    //     let mut file = File::create("z_h_on_coset.inverses.bin").unwrap();
+    //     for value in z_h_on_coset.inverses.iter() {
+    //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
+    //     }
+    // }
 
     let points_batches = points.par_chunks(BATCH_SIZE);
     let num_batches = ceil_div_usize(points.len(), BATCH_SIZE);
