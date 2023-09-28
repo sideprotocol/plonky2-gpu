@@ -173,6 +173,8 @@ struct  GoldilocksField{
 
     static const uint64_t ORDER = 0xFFFFFFFF00000001;
 
+#define from_canonical_usize from_canonical_u64
+
     __device__ inline
     static const GoldilocksField coset_shift() {
         return GoldilocksField{7};
@@ -394,7 +396,7 @@ struct  GoldilocksField{
     }
 
     __device__ inline
-    GoldilocksField operator+(const GoldilocksField& rhs) {
+    GoldilocksField operator+(const GoldilocksField& rhs) const {
         int over = 0;
         uint64_t sum = overflowing_add(this->data, rhs.data, &over);
         sum = overflowing_add(sum, over * EPSILON, &over);
@@ -413,7 +415,7 @@ struct  GoldilocksField{
         return GoldilocksField{.data = sum};
     }
     __device__ inline
-    GoldilocksField operator-(const GoldilocksField& rhs) {
+    GoldilocksField operator-(const GoldilocksField& rhs) const {
         int under = 0;
         uint64_t diff = overflowing_sub(this->data, rhs.data, &under);
         diff = overflowing_sub(diff, under * EPSILON, &under);
@@ -527,6 +529,87 @@ struct Range :my_pair<T, T> {
             :my_pair<T, T>(t1, t2)
     {
     }
+
+    struct Iterator {
+        using iterator_category = std::forward_iterator_tag;
+        using value_type = T;
+
+        // 构造函数
+        __device__ inline
+        Iterator(value_type p) :num(p) {}
+
+        // 拷贝赋值函数
+        __device__ inline
+        Iterator& operator=(const Iterator& it) {
+            num = it.num;
+        }
+
+        // 等于运算符
+        __device__ inline
+        bool operator==(const Iterator& it) const {
+            return num == it.num;
+        }
+
+        // 不等于运算符
+        __device__ inline
+        bool operator!=(const Iterator& it) const {
+            return num != it.num;
+        }
+
+        // 前缀自加
+        __device__ inline
+        Iterator& operator++() {
+            num++;
+            return *this;
+        }
+
+        // 后缀自加
+        __device__ inline
+        Iterator operator ++(int) {
+            Iterator tmp = *this;
+            ++(*this);
+            return tmp;
+        }
+
+        // 前缀自减
+        __device__ inline
+        Iterator& operator--() {
+            num--;
+            return *this;
+        }
+
+        // 后缀自减
+        __device__ inline
+        Iterator operator --(int) {
+            Iterator tmp = *this;
+            --(*this);
+            return tmp;
+        }
+
+//        // 取值运算
+        __device__ inline
+        value_type & operator*() {
+            return num;
+        }
+
+    private:
+        // 定义一个指针
+        value_type num;
+    };
+
+
+    // 遍历的第一个元素的位置
+    __device__ inline
+    Iterator begin() {
+        return Iterator(this->first);
+    }
+
+    // 遍历的最后一个元素的下一个位置
+    __device__ inline
+    Iterator end() {
+        return Iterator(this->second);
+    }
+
 };
 
 struct PoseidonHasher {
@@ -781,6 +864,94 @@ struct GoldilocksFieldView {
         return this->ptr[index];
     }
 
+
+
+    struct Iterator {
+        using iterator_category = std::forward_iterator_tag;
+        using difference_type = std::ptrdiff_t;
+        using value_type = GoldilocksField;
+        using reference = const GoldilocksField&;
+        using pointer = GoldilocksField*;
+
+        // 构造函数
+        __device__ inline
+        Iterator(pointer p) :ptr(p) {}
+
+        // 拷贝赋值函数
+        __device__ inline
+        Iterator& operator=(const Iterator& it) {
+            ptr = it.ptr;
+        }
+
+        // 等于运算符
+        __device__ inline
+        bool operator==(const Iterator& it) const {
+            return ptr == it.ptr;
+        }
+
+        // 不等于运算符
+        __device__ inline
+        bool operator!=(const Iterator& it) const {
+            return ptr != it.ptr;
+        }
+
+        // 前缀自加
+        __device__ inline
+        Iterator& operator++() {
+            ptr++;
+            return *this;
+        }
+
+        // 后缀自加
+        __device__ inline
+        Iterator operator ++(int) {
+            Iterator tmp = *this;
+            ++(*this);
+            return tmp;
+        }
+
+        // 前缀自减
+        __device__ inline
+        Iterator& operator--() {
+            ptr--;
+            return *this;
+        }
+
+        // 后缀自减
+        __device__ inline
+        Iterator operator --(int) {
+            Iterator tmp = *this;
+            --(*this);
+            return tmp;
+        }
+
+//        // 取值运算
+        __device__ inline
+        value_type & operator*() {
+            return *ptr;
+        }
+
+    private:
+        // 定义一个指针
+        pointer ptr;
+    };
+
+
+    // 遍历的第一个元素的位置
+    __device__ inline
+    Iterator begin() {
+        GoldilocksField* head = ptr;
+        return Iterator(head);
+    }
+
+    // 遍历的最后一个元素的下一个位置
+    __device__ inline
+    Iterator end() {
+        GoldilocksField* head = ptr;
+        return Iterator(head + len);
+    }
+
+
 };
 
 
@@ -799,5 +970,28 @@ struct StridedConstraintConsumer {
     }
 };
 
+template<class FN>
+__device__ inline
+GoldilocksField reduce_with_powers(Range<usize> range, FN f, GoldilocksField alpha)
+{
+    auto sum = GoldilocksField{0};
+    for (int i = range.second-1; i >= 0; --i) {
+        sum = sum * alpha + f(i);
+    }
+    return sum;
+}
+
+__device__ inline
+GoldilocksField reduce_with_powers(GoldilocksFieldView terms, GoldilocksField alpha)
+{
+    return reduce_with_powers(Range<usize>{0, terms.len}, [terms](int i) ->GoldilocksField {
+        return terms[i];
+    }, alpha);
+}
+
+__device__ inline
+static constexpr usize ceil_div_usize(usize a, usize b) {
+    return (a + b - 1) / b;
+}
 
 #endif

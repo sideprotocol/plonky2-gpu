@@ -1,6 +1,6 @@
 
-struct ArithmeticGate: public Gate {
-    int num_ops = 20;
+struct ArithmeticGate INHERIT_BASE {
+    int num_ops;
 
     __device__ inline
     usize wire_ith_multiplicand_0(usize i) {
@@ -20,14 +20,14 @@ struct ArithmeticGate: public Gate {
     }
 
     __device__ inline
-    virtual int num_constraints() const override {
+    VIRTUAL int num_constraints() const OVERRIDE {
         return num_ops;
     }
 
     __device__ inline
-    virtual void eval_unfiltered_base_packed(
+    VIRTUAL void eval_unfiltered_base_packed(
             EvaluationVarsBasePacked vars,
-            StridedConstraintConsumer yield_constr) override {
+            StridedConstraintConsumer yield_constr) OVERRIDE {
         auto const_0 = vars.local_constants[0];
         auto const_1 = vars.local_constants[1];
 
@@ -45,4 +45,3 @@ struct ArithmeticGate: public Gate {
 
 };
 
-__constant__ __device__ ArithmeticGate ArithmeticGate_d;

@@ -495,6 +495,9 @@ void compute_quotient_values_kernel(
 {
     constexpr int num_challenges = 2;
     constexpr int num_gate_constraints = 231;
+    assert(num_gate_constraints == _num_gate_constraints);
+    assert(num_challenges == _num_challenges);
+
     int thCnt = get_global_thcnt();
     int gid = get_global_id();
 
@@ -567,8 +570,8 @@ void compute_quotient_values_kernel(
 //                    &numerator_values,
 //                    &denominator_values,
 //                    current_partial_products,
-//                    z_x,
-//                    z_gx,
+////                    z_x,
+////                    z_gx,
 //                    max_degree,
 //            );
 
@@ -627,16 +630,82 @@ void compute_quotient_values_kernel(
                 .groups = groups
         };
 
-        int gates[25] = {
-                1, 2, 5
+        struct BaseGate {};
+        using FUNC = void (BaseGate::*)(EvaluationVarsBasePacked,GoldilocksField *,GoldilocksField *);
+
+        struct GateFUNC {
+            BaseGate* gate;
+            FUNC func;
+            int num_constraints;
         };
+        constexpr const int num_gates = 25;
+        GateFUNC gate_objs[num_gates];
+
+#define DECL_GATE_NAME(TYPE, NAME, INDEX) \
+        gate_objs[INDEX] = GateFUNC{.gate = (BaseGate*)&NAME, .func = (FUNC)&TYPE::eval_unfiltered_base_packed, .num_constraints = NAME.num_constraints()};
+
+        NoopGate NoopGate_ins;
+        DECL_GATE_NAME(NoopGate,NoopGate_ins, 0);
+	ConstantGate ConstantGate_ins{ .num_consts = 2 };
+        DECL_GATE_NAME(ConstantGate, ConstantGate_ins, 1);
+
+	PublicInputGate PublicInputGate_ins;
+        DECL_GATE_NAME(PublicInputGate,PublicInputGate_ins, 2);
+
+	BaseSumGate<2> BaseSumGate_ins{ .num_limbs = 32 };
+        DECL_GATE_NAME(BaseSumGate<2>,BaseSumGate_ins, 3);
+	BaseSumGate<2> BaseSumGate_ins2{ .num_limbs = 63 };
+        DECL_GATE_NAME(BaseSumGate<2>,BaseSumGate_ins2, 4);
+	ArithmeticGate ArithmeticGate_ins{ .num_ops = 20 };
+        DECL_GATE_NAME(ArithmeticGate,ArithmeticGate_ins, 5);
+	BaseSumGate<4> BaseSumGate_ins3{ .num_limbs = 16 };
+        DECL_GATE_NAME(BaseSumGate<4>,BaseSumGate_ins3, 6);
+
+	ComparisonGate ComparisonGate_ins{ .num_bits = 32, .num_chunks = 16};
+        DECL_GATE_NAME(ComparisonGate,ComparisonGate_ins, 7);
+
+	U32AddManyGate U32AddManyGate_ins{ .num_addends = 0, .num_ops = 11};
+        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins, 8);
+	U32AddManyGate U32AddManyGate_ins2{ .num_addends = 11, .num_ops = 5};
+        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins2, 9);
+	U32AddManyGate U32AddManyGate_ins3{ .num_addends = 13, .num_ops = 5};
+        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins3, 10);
+	U32AddManyGate U32AddManyGate_ins4{ .num_addends = 15, .num_ops = 4};
+        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins4, 11);
+	U32AddManyGate U32AddManyGate_ins5{ .num_addends = 16, .num_ops = 4};
+        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins5, 12);
+	U32AddManyGate U32AddManyGate_ins6{ .num_addends = 2, .num_ops = 10};
+        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins6, 13);
+	U32AddManyGate U32AddManyGate_ins7{ .num_addends = 3, .num_ops = 9};
+        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins7, 14);
+	U32AddManyGate U32AddManyGate_ins8{ .num_addends = 5, .num_ops = 9};
+        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins8, 15);
+	U32AddManyGate U32AddManyGate_ins9{ .num_addends = 7, .num_ops = 8};
+        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins9, 16);
+	U32AddManyGate U32AddManyGate_ins10{ .num_addends = 9, .num_ops = 6};
+        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins10, 17);
+	U32ArithmeticGate U32ArithmeticGate_ins{ .num_ops = 6};
+        DECL_GATE_NAME(U32ArithmeticGate,U32ArithmeticGate_ins, 18);
+	U32RangeCheckGate U32RangeCheckGate_ins2{ .num_input_limbs = 0};
+        DECL_GATE_NAME(U32RangeCheckGate,U32RangeCheckGate_ins2, 19);
+	U32RangeCheckGate U32RangeCheckGate_ins3{ .num_input_limbs = 1};
+        DECL_GATE_NAME(U32RangeCheckGate,U32RangeCheckGate_ins3, 20);
+	U32RangeCheckGate U32RangeCheckGate_ins4{ .num_input_limbs = 8};
+        DECL_GATE_NAME(U32RangeCheckGate,U32RangeCheckGate_ins4, 21);
+	U32SubtractionGate U32SubtractionGate_ins{ .num_ops = 11};
+        DECL_GATE_NAME(U32SubtractionGate,U32SubtractionGate_ins, 22);
+	RandomAccessGate RandomAccessGate_ins{ .bits = 4, .num_copies = 4, .num_extra_constants = 2};
+        DECL_GATE_NAME(RandomAccessGate,RandomAccessGate_ins, 23);
+	PoseidonGate PoseidonGate_ins;
+        DECL_GATE_NAME(PoseidonGate,PoseidonGate_ins, 24);
+
+
         GoldilocksField constraints_batch[num_gate_constraints];
         GoldilocksField terms[num_gate_constraints];
-        auto evaluate_gate_constraints_base_batch = [&constraints_batch, &terms, gates, selectors_info, local_constants, local_wires]() {
-            int num_gates = 1;
+        auto evaluate_gate_constraints_base_batch = [&constraints_batch, &terms, gate_objs, selectors_info, local_constants, local_wires]() {
             for (int row = 0; row < num_gates; ++row) {
                 int selector_index = selectors_info.selector_indices[row];
-                auto gate = gates_g[gates[row]];
+                auto gate = gate_objs[row];
 
                 auto compute_filter = [](int row, Range<int> group_range, GoldilocksField s, bool many_selector) -> GoldilocksField {
 //                        debug_assert!(group_range.contains(&row));
@@ -665,8 +734,9 @@ void compute_quotient_values_kernel(
                         .local_constants = local_constants.view(num_selectors, local_constants.len),
                         .local_wires = local_wires
                 };
-                gate->eval_unfiltered_base_batch(vars, constraints_batch, terms);
-                for (int i = 0; i < gate->num_constraints(); ++i) {
+                auto fn = gate.func;
+                ((gate.gate)->*fn)(vars, constraints_batch, terms);
+                for (int i = 0; i < gate.num_constraints; ++i) {
                     constraints_batch[i] += terms[i] * filter;
                 }
 

@@ -9,9 +9,14 @@ struct Gate {
     __device__ inline
     virtual void eval_unfiltered_base_packed(
             EvaluationVarsBasePacked vars,
-            StridedConstraintConsumer yield_constr) = 0;
+            StridedConstraintConsumer yield_constr) {};
 
     __device__ inline
+    virtual void eval_unfiltered_base_one(
+            EvaluationVarsBasePacked vars,
+            StridedConstraintConsumer yield_constr) {};
+
+        __device__ inline
     virtual void eval_unfiltered_base_batch(
             EvaluationVarsBasePacked vars,
             GoldilocksField* constraints_batch,
@@ -25,12 +30,33 @@ struct Gate {
     }
 };
 
+#define USE_VIRTUAL_FUN 0
+
+#if USE_VIRTUAL_FUN
+#define INHERIT_BASE  : public Gate
+#define VIRTUAL virtual
+#define OVERRIDE override
+#else
+#define INHERIT_BASE
+#define VIRTUAL
+#define OVERRIDE
+
+#endif
+
 #include "ArithmeticGate.cuh"
 #include "BaseSumGate.cuh"
 
-__constant__ __device__ Gate* gates_g[] = {
-        &ArithmeticGate_d
-};
+#include "ComparisonGate.cuh"
+#include "ConstantGate.cuh"
+#include "NoopGate.cuh"
+#include "PoseidonGate.cuh"
+#include "PublicInputGate.cuh"
+#include "RandomAccessGate.cuh"
+#include "U32AddManyGate.cuh"
+#include "U32ArithmeticGate.cuh"
+#include "U32RangeCheckGate.cuh"
+#include "U32SubtractionGate.cuh"
+
 
 
 #endif

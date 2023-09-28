@@ -1,8 +1,9 @@
 /// Returns the index of the `i`th limb wire.
 
 
-struct BaseSumGate : public Gate{
-    usize num_limbs = 0;
+template<int B>
+struct BaseSumGate  INHERIT_BASE{
+    usize num_limbs;
 
 
     static constexpr usize WIRE_SUM = 0;
@@ -14,21 +15,27 @@ struct BaseSumGate : public Gate{
     }
 
     __device__ inline
-    virtual void eval_unfiltered_base_packed(
+    VIRTUAL int num_constraints() const OVERRIDE {
+        return 1 + this->num_limbs;
+    }
+
+    __device__ inline
+    VIRTUAL void eval_unfiltered_base_packed(
             EvaluationVarsBasePacked vars,
-            StridedConstraintConsumer yield_constr) override {
+            StridedConstraintConsumer yield_constr) OVERRIDE {
          auto sum = vars.local_wires[WIRE_SUM];
          auto limbs = vars.local_wires.view(this->limbs());
-//         auto computed_sum = reduce_with_powers(limbs, F::from_canonical_usize(B));
-//
-//        yield_constr.one(computed_sum - sum);
+         auto computed_sum = reduce_with_powers(limbs, GoldilocksField::from_canonical_u64(B));
 
-//         constraints_iter = limbs.iter().map(|&limb| {
-//                (0..B)
-//                        .map(|i| limb - F::from_canonical_usize(i))
-//                .product::<P>()
-//        });
-//        yield_constr.many(constraints_iter);
+        yield_constr.one(computed_sum - sum);
+
+        for (auto limb: limbs) {
+            GoldilocksField product = GoldilocksField{1};
+            for (int i = 0; i < 8; ++i) {
+                product *= limb - GoldilocksField::from_canonical_u64(i);
+            }
+            yield_constr.one(product);
+        }
 
     }
 };
