@@ -174,8 +174,33 @@ struct  GoldilocksField{
     static const uint64_t ORDER = 0xFFFFFFFF00000001;
 
 #define from_canonical_usize from_canonical_u64
-
+    enum field_end {
+        none,
+        colum,
+        colum_space,
+        newline,
+    };
     __device__ inline
+    void print_hex(const char* prompt = NULL, field_end end_mode = field_end::none) const {
+        if (prompt != NULL) {
+            printf("%s: %lx", prompt, this->data);
+        } else
+            printf("%lx", this->data);
+        switch (end_mode) {
+            case field_end::none:
+                break;
+            case field_end::colum:
+                printf(",");
+                break;
+            case field_end::colum_space:
+                printf(", ");
+                break;
+            case field_end::newline:
+                printf("\n");
+                break;
+        }
+    }
+        __device__ inline
     static const GoldilocksField coset_shift() {
         return GoldilocksField{7};
     }
@@ -216,7 +241,7 @@ struct  GoldilocksField{
         i128 c = 1;
         i128 d = 0;
 
-//        assert (f != 0);
+        assert (f != 0);
 
         auto trailing_zeros = [](uint64_t n) -> int{
             int count = 0;
@@ -333,7 +358,10 @@ struct  GoldilocksField{
         // Precomputing the binary inverses rather than using inverse_2exp
         // saves ~5ns on my machine.
         auto res = GoldilocksField::from_canonical_u64(u64(c)) * GoldilocksField::inverse_2exp(u64(k));
-//        assert(*this * res == GoldilocksField::from_canonical_u64(1));
+//        if (*this * res != GoldilocksField::from_canonical_u64(1)) {
+//            printf("this: %lx, res: %lx\n", this->data, res.data);
+//        }
+        assert(*this * res == GoldilocksField::from_canonical_u64(1));
         return res;
     }
 
@@ -488,8 +516,22 @@ struct  GoldilocksField{
         return *this;
     }
     __device__ inline
-    bool operator==(const GoldilocksField& rhs) {
-        return rhs.data == this->data;
+    u64 to_canonical_u64() const {
+        auto c = this->data;
+        // We only need one condition subtraction, since 2 * ORDER would not fit in a u64.
+        if (c >= GoldilocksField::ORDER) {
+            c -= GoldilocksField::ORDER;
+        }
+        return c;
+    }
+
+    __device__ inline
+    bool operator==(const GoldilocksField& rhs) const {
+        return rhs.to_canonical_u64() == this->to_canonical_u64();
+    }
+    __device__ inline
+    bool operator!=(const GoldilocksField& rhs) {
+        return rhs.to_canonical_u64() != this->to_canonical_u64();
     }
 
     __device__ inline
@@ -529,7 +571,9 @@ struct Range :my_pair<T, T> {
             :my_pair<T, T>(t1, t2)
     {
     }
-
+    __device__ inline bool contains(int row) {
+        return  row >= this->first && row < this->second;
+    }
     struct Iterator {
         using iterator_category = std::forward_iterator_tag;
         using value_type = T;
@@ -847,6 +891,17 @@ struct GoldilocksFieldView {
     int len;
 
     __device__ inline
+    void print_hex(const char* prompt = NULL) const {
+        if (prompt)
+            printf("%s: ", prompt);
+        printf("[");
+        for (int i = 0; i < len; ++i) {
+            (*this)[i].print_hex();
+            printf("%s", i==len-1?"":", ");
+        }
+        printf("]\n");
+    }
+    __device__ inline
     GoldilocksFieldView view(int start, int end) const {
         return GoldilocksFieldView{this->ptr + start, end-start};
     }
@@ -963,19 +1018,21 @@ struct EvaluationVarsBasePacked {
 
 struct StridedConstraintConsumer {
     GoldilocksField* terms;
+    GoldilocksField* end;
 
     __device__ inline
     void one(GoldilocksField term) {
+        assert(terms != end);
         *terms++ = term;
     }
 };
 
 template<class FN>
 __device__ inline
-GoldilocksField reduce_with_powers(Range<usize> range, FN f, GoldilocksField alpha)
+GoldilocksField reduce_with_powers(Range<int> range, FN f, GoldilocksField alpha)
 {
     auto sum = GoldilocksField{0};
-    for (int i = range.second-1; i >= 0; --i) {
+    for (int i = range.second-1; i >= range.first; --i) {
         sum = sum * alpha + f(i);
     }
     return sum;
@@ -984,7 +1041,7 @@ GoldilocksField reduce_with_powers(Range<usize> range, FN f, GoldilocksField alp
 __device__ inline
 GoldilocksField reduce_with_powers(GoldilocksFieldView terms, GoldilocksField alpha)
 {
-    return reduce_with_powers(Range<usize>{0, terms.len}, [terms](int i) ->GoldilocksField {
+    return reduce_with_powers(Range<int>{0, terms.len}, [terms](int i) ->GoldilocksField {
         return terms[i];
     }, alpha);
 }

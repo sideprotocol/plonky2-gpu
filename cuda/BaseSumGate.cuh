@@ -31,7 +31,7 @@ struct BaseSumGate  INHERIT_BASE{
 
         for (auto limb: limbs) {
             GoldilocksField product = GoldilocksField{1};
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < B; ++i) {
                 product *= limb - GoldilocksField::from_canonical_u64(i);
             }
             yield_constr.one(product);

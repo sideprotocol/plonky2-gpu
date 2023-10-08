@@ -344,12 +344,10 @@ struct PoseidonGate INHERIT_BASE {
     __device__ inline
     VIRTUAL void eval_unfiltered_base_packed(
             EvaluationVarsBasePacked vars,
-            GoldilocksField* constraints_batch,
-            GoldilocksField* terms
-    ) OVERRIDE {
+            StridedConstraintConsumer yield_constr) OVERRIDE {
         eval_unfiltered_base_one(
                 vars,
-                StridedConstraintConsumer{terms}
+                yield_constr
         );
     }
 };

@@ -26,7 +26,7 @@ struct RandomAccessGate INHERIT_BASE {
             auto bits = [vars, this, copy](int i) -> GoldilocksField {
                 return vars.local_wires[this->wire_bit(i, copy)];
             };
-            auto bitsRange = Range<usize>{0, this->bits};
+            auto bitsRange = Range<int>{0, this->bits};
 
 
             // Assert that each bit wire value is indeed boolean.
@@ -37,7 +37,7 @@ struct RandomAccessGate INHERIT_BASE {
 
             // Assert that the binary decomposition was correct.
             GoldilocksField reconstructed_index = {0};
-            for (int i = bitsRange.second-1; i >= 0; --i) {
+            for (int i = bitsRange.second-1; i >= bitsRange.first; --i) {
                 auto b = bits(i);
                 reconstructed_index += reconstructed_index + b;
             }
@@ -60,7 +60,7 @@ struct RandomAccessGate INHERIT_BASE {
                 int c = 0;
                 for (int j = 0; j < count; j+=2) {
                     auto x = list_items[j];
-                    auto y = list_items[j+2];
+                    auto y = list_items[j+1];
                     list_items[c++] = x + b * (y - x);
                 }
                 count = c;

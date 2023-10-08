@@ -90,7 +90,6 @@ struct U32AddManyGate INHERIT_BASE {
             auto combined_output = output_carry * base0 + output_result;
 
             yield_constr.one(combined_output - computed_output);
-
             auto combined_result_limbs = GoldilocksField{0};
             auto combined_carry_limbs = GoldilocksField{0};
             auto base = GoldilocksField::from_canonical_u64(1ULL << Self::limb_bits());
@@ -118,12 +117,10 @@ struct U32AddManyGate INHERIT_BASE {
     __device__ inline
     VIRTUAL void eval_unfiltered_base_packed(
             EvaluationVarsBasePacked vars,
-            GoldilocksField* constraints_batch,
-            GoldilocksField* terms
-    ) OVERRIDE {
+            StridedConstraintConsumer yield_constr) OVERRIDE {
         eval_unfiltered_base_one(
                 vars,
-                StridedConstraintConsumer{terms}
+                yield_constr
         );
     }
 

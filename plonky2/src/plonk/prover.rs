@@ -621,7 +621,8 @@ fn compute_quotient_polys<
     let z_h_on_coset = ZeroPolyOnCoset::new(common_data.degree_bits(), quotient_degree_bits);
     println!("z_h_on_coset, n: {}, rate: {}", z_h_on_coset.n, z_h_on_coset.rate);
     println!("step: {}, next_step: {}, lde_size: {}", step, next_step, lde_size);
-    // unsafe {
+    println!("public_inputs_hash: {:?}", public_inputs_hash);
+    unsafe {
     //     let mut file = File::create("zs_partial_products_commitment.polynomials.bin").unwrap();
     //     for value in zs_partial_products_commitment.polynomials.iter().flat_map(|v| v.coeffs.clone()) {
     //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(&value)).unwrap();
@@ -639,21 +640,21 @@ fn compute_quotient_polys<
     //         file.write_all(std::mem::transmute::<&_, &[u8; 32]>(value)).unwrap();
     //     }
     //
+    //     let mut file = File::create("alphas.bin").unwrap();
+    //     for value in alphas {
+    //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
+    //     }
+    //
     //     let mut file = File::create("betas.bin").unwrap();
     //     for value in betas {
     //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
     //     }
     //     let mut file = File::create("gammas.bin").unwrap();
-    //     for value in betas {
+    //     for value in gammas {
     //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
     //     }
     //     let mut file = File::create("k_is.bin").unwrap();
     //     for value in common_data.k_is.iter() {
-    //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
-    //     }
-    //
-    //     let mut file = File::create("alphas.bin").unwrap();
-    //     for value in betas {
     //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
     //     }
     //
@@ -663,6 +664,7 @@ fn compute_quotient_polys<
     //     }
     //
     //     let mut file = File::create("z_h_on_coset.evals.bin").unwrap();
+    //     println!("z_h_on_coset.evals len: {}", z_h_on_coset.evals.len());
     //     for value in z_h_on_coset.evals.iter() {
     //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
     //     }
@@ -670,7 +672,11 @@ fn compute_quotient_polys<
     //     for value in z_h_on_coset.inverses.iter() {
     //         file.write_all(std::mem::transmute::<&F, &[u8; 8]>(value)).unwrap();
     //     }
-    // }
+    }
+
+    println!("alphas: {:?}", alphas);
+    println!("betas: {:?}", betas);
+    println!("gammas: {:?}", gammas);
 
     let points_batches = points.par_chunks(BATCH_SIZE);
     let num_batches = ceil_div_usize(points.len(), BATCH_SIZE);
@@ -715,6 +721,12 @@ fn compute_quotient_polys<
                 let partial_products =
                     &local_zs_partial_products[common_data.partial_products_range()];
 
+                if i == 2086137 {
+                    println!("i: {}, len: {}, lcs: {:?}", i, local_constants_sigmas.len(), local_constants_sigmas);
+                    println!("i: {}, len: {}, lw: {:?}", i, local_wires.len(), local_wires);
+                    println!("i: {}, len: {}, lzpp: {:?}", i, local_zs_partial_products.len(), local_zs_partial_products);
+                    println!("i: {}, len: {}, nzs: {:?}", i, next_zs.len(), next_zs);
+                }
                 debug_assert_eq!(local_wires.len(), common_data.config.num_wires);
                 debug_assert_eq!(local_zs.len(), num_challenges);
 
@@ -773,6 +785,10 @@ fn compute_quotient_polys<
                 quotient_values
                     .iter_mut()
                     .for_each(|v| *v *= denominator_inv);
+
+                if i == 2086137 {
+                    println!("i: {}, res: {:?}", i, quotient_values);
+                }
             }
             quotient_values_batch
         })

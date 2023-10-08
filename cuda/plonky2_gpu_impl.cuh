@@ -473,14 +473,17 @@ void transpose_kernel(GoldilocksField* src_values_flatten, GoldilocksField* dst_
 __global__
 void compute_quotient_values_kernel(
         int degree_log, int rate_bits, GoldilocksField* points, GoldilocksField* outs,
+        PoseidonHasher::HashOut public_inputs_hash,
+
+
         GoldilocksField* constants_sigmas_commitment_leaves,     int constants_sigmas_commitment_leaf_len,
         GoldilocksField* zs_partial_products_commitment_leaves,  int zs_partial_products_commitment_leaf_len,
         GoldilocksField* wires_commitment_leaves,                int wires_commitment_leaf_len,
-        int num_constants, int num_routed_wires,
+        int num_constants, int _num_routed_wires,
         int _num_challenges,
         int _num_gate_constraints,
 
-        int quotient_degree_factor,
+        int _quotient_degree_factor,
         int num_partial_products,
 
         GoldilocksField* z_h_on_coset_evals,
@@ -501,15 +504,29 @@ void compute_quotient_values_kernel(
     int thCnt = get_global_thcnt();
     int gid = get_global_id();
 
+//    if (gid == 0) {
+//        auto res = GoldilocksField::from_canonical_u64(0xfff923c55a2e4a87) * GoldilocksField::from_canonical_u64(0xbfa99fe2edeb56f5);
+//        printf("mul: %lx\n", res.data);
+////        assert(res == GoldilocksField::from_canonical_u64(1));
+//    }
+
     int step = 1;
     int next_step = 8;
     int values_num_per_extpoly = (1<<(rate_bits+degree_log));
 //    int values_num_per_extpoly = 1;
     int lde_size  = values_num_per_extpoly;
 
-
-    int max_degree = quotient_degree_factor;
+    constexpr int quotient_degree_factor = 8;
+    constexpr int num_routed_wires = 80;
+    constexpr int max_degree = quotient_degree_factor;
     int num_prods = num_partial_products;
+
+    if (gid == 0) {
+        GoldilocksFieldView{alphas, num_challenges}.print_hex("alphas");
+        GoldilocksFieldView{betas, num_challenges}.print_hex("betas");
+        GoldilocksFieldView{gammas, num_challenges}.print_hex("gammas");
+
+    }
 
     auto get_lde_values = [degree_log, rate_bits](GoldilocksField* leaves, int leaf_len, int i, int step) -> GoldilocksFieldView {
         int index = i * step;
@@ -518,20 +535,32 @@ void compute_quotient_values_kernel(
     };
 
     for (int index = gid; index < values_num_per_extpoly; index += thCnt) {
-        auto x = points[index];
-        GoldilocksField shifted_x = GoldilocksField::coset_shift() * x;
+        GoldilocksField x = GoldilocksField::coset_shift() * points[index];
         int i_next = (index + next_step) % lde_size;
-        auto local_constants_sigmas = get_lde_values(constants_sigmas_commitment_leaves, constants_sigmas_commitment_leaf_len, index, step);
+        auto local_constants_sigmas = get_lde_values(constants_sigmas_commitment_leaves,
+                                                     constants_sigmas_commitment_leaf_len, index, step);
 
         auto local_constants = local_constants_sigmas.view(0, num_constants);
-        auto s_sigmas = local_constants_sigmas.view(num_constants, num_constants+num_routed_wires);
+        auto s_sigmas = local_constants_sigmas.view(num_constants, num_constants + num_routed_wires);
         auto local_wires = get_lde_values(wires_commitment_leaves, wires_commitment_leaf_len, index, step);
-        auto local_zs_partial_products = get_lde_values(zs_partial_products_commitment_leaves, zs_partial_products_commitment_leaf_len, index, step);
+        auto local_zs_partial_products = get_lde_values(zs_partial_products_commitment_leaves,
+                                                        zs_partial_products_commitment_leaf_len, index, step);
         auto local_zs = local_zs_partial_products.view(0, num_challenges);
-        auto next_zs = get_lde_values(zs_partial_products_commitment_leaves, zs_partial_products_commitment_leaf_len, i_next, step).view(0, num_challenges);
+        auto next_zs = get_lde_values(zs_partial_products_commitment_leaves, zs_partial_products_commitment_leaf_len,
+                                      i_next, step).view(0, num_challenges);
 
         auto partial_products = local_zs_partial_products.view(num_challenges);
 
+        if (index == 2086137) {
+            printf("i: %d, len: %d, lcs: ", index, local_constants_sigmas.len);
+            local_constants_sigmas.print_hex();
+            printf("i: %d, len: %d, lw: ", index, local_wires.len);
+            local_wires.print_hex();
+            printf("i: %d, len: %d, lzpp: ", index, local_zs_partial_products.len);
+            local_zs_partial_products.print_hex();
+            printf("i: %d, len: %d, nzs: ", index, next_zs.len);
+            next_zs.print_hex();
+        }
 
 //        let constraint_terms_batch =
 //        evaluate_gate_constraints_base_batch::<F, C, D>(common_data, vars_batch);
@@ -540,11 +569,7 @@ void compute_quotient_values_kernel(
 
 //        let constraint_terms = PackedStridedView::new(&constraint_terms_batch, n, k);
 
-        auto eval_l_0 = [z_h_on_coset_evals, rate_bits, degree_log](int index, GoldilocksField x) -> GoldilocksField {
-//            return z_h_on_coset_evals[index%rate_bits] * (GoldilocksField::from_canonical_u64(1<<degree_log) * (x - GoldilocksField{1})).inverse();
-            return z_h_on_coset_evals[index%rate_bits] * (GoldilocksField::from_canonical_u64(1<<degree_log) * (x - GoldilocksField{1}));
-        };
-        GoldilocksField res[num_challenges];
+        GoldilocksField res[num_challenges] = {0};
 
         auto reduce_with_powers = [&res, &alphas, num_challenges](GoldilocksField term) {
             for (int i = 0; i < num_challenges; ++i) {
@@ -552,13 +577,182 @@ void compute_quotient_values_kernel(
             }
         };
 
-        auto l_0_x = eval_l_0(index, x);
-        for (int i = 0; i < num_challenges; ++i) {
-            auto z_x = local_zs[i];
-            res[0] = GoldilocksField::from_canonical_u64(0);
-            reduce_with_powers(l_0_x * z_x.sub_one());
+        GoldilocksField constraint_terms_batch[num_gate_constraints] = {0};
+        auto evaluate_gate_constraints_base_batch = [&]()
+        {
+            struct SelectorsInfo {
+                int *selector_indices;
+                Range<int>* groups;
+            };
+
+            int selector_indices[25] = {
+                    0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4, 5
+            };
+
+            constexpr  int num_selectors = 6;
+            Range<int> groups[num_selectors] = {
+                    Range<int>{0,6},
+                    Range<int>{6,11},
+                    Range<int>{11,16},
+                    Range<int>{16,21},
+                    Range<int>{21,24},
+                    Range<int>{24,25}
+            };
+            SelectorsInfo selectors_info = {
+                    .selector_indices = selector_indices,
+                    .groups = groups
+            };
+
+            struct BaseGate {};
+            using FUNC = void (BaseGate::*)(EvaluationVarsBasePacked, StridedConstraintConsumer yield_constr);
+
+            struct GateFUNC {
+                BaseGate* gate;
+                FUNC func;
+                int num_constraints;
+            };
+            constexpr const int num_gates = 25;
+            GateFUNC gate_objs[num_gates];
+
+#define DECL_GATE_NAME(TYPE, NAME, INDEX) \
+        gate_objs[INDEX] = GateFUNC{.gate = (BaseGate*)&NAME, .func = (FUNC)&TYPE::eval_unfiltered_base_packed, .num_constraints = NAME.num_constraints()};
+
+            NoopGate NoopGate_ins;
+            DECL_GATE_NAME(NoopGate,NoopGate_ins, 0);
+            ConstantGate ConstantGate_ins{ .num_consts = 2 };
+            DECL_GATE_NAME(ConstantGate, ConstantGate_ins, 1);
+
+            PublicInputGate PublicInputGate_ins;
+            DECL_GATE_NAME(PublicInputGate,PublicInputGate_ins, 2);
+
+            BaseSumGate<2> BaseSumGate_ins{ .num_limbs = 32 };
+            DECL_GATE_NAME(BaseSumGate<2>,BaseSumGate_ins, 3);
+            BaseSumGate<2> BaseSumGate_ins2{ .num_limbs = 63 };
+            DECL_GATE_NAME(BaseSumGate<2>,BaseSumGate_ins2, 4);
+            ArithmeticGate ArithmeticGate_ins{ .num_ops = 20 };
+            DECL_GATE_NAME(ArithmeticGate,ArithmeticGate_ins, 5);
+            BaseSumGate<4> BaseSumGate_ins3{ .num_limbs = 16 };
+            DECL_GATE_NAME(BaseSumGate<4>,BaseSumGate_ins3, 6);
+
+            ComparisonGate ComparisonGate_ins{ .num_bits = 32, .num_chunks = 16};
+            DECL_GATE_NAME(ComparisonGate,ComparisonGate_ins, 7);
+
+            U32AddManyGate U32AddManyGate_ins{ .num_addends = 0, .num_ops = 11};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins, 8);
+            U32AddManyGate U32AddManyGate_ins2{ .num_addends = 11, .num_ops = 5};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins2, 9);
+            U32AddManyGate U32AddManyGate_ins3{ .num_addends = 13, .num_ops = 5};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins3, 10);
+            U32AddManyGate U32AddManyGate_ins4{ .num_addends = 15, .num_ops = 4};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins4, 11);
+            U32AddManyGate U32AddManyGate_ins5{ .num_addends = 16, .num_ops = 4};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins5, 12);
+            U32AddManyGate U32AddManyGate_ins6{ .num_addends = 2, .num_ops = 10};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins6, 13);
+            U32AddManyGate U32AddManyGate_ins7{ .num_addends = 3, .num_ops = 9};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins7, 14);
+            U32AddManyGate U32AddManyGate_ins8{ .num_addends = 5, .num_ops = 9};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins8, 15);
+            U32AddManyGate U32AddManyGate_ins9{ .num_addends = 7, .num_ops = 8};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins9, 16);
+            U32AddManyGate U32AddManyGate_ins10{ .num_addends = 9, .num_ops = 6};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins10, 17);
+            U32ArithmeticGate U32ArithmeticGate_ins{ .num_ops = 6};
+            DECL_GATE_NAME(U32ArithmeticGate,U32ArithmeticGate_ins, 18);
+            U32RangeCheckGate U32RangeCheckGate_ins2{ .num_input_limbs = 0};
+            DECL_GATE_NAME(U32RangeCheckGate,U32RangeCheckGate_ins2, 19);
+            U32RangeCheckGate U32RangeCheckGate_ins3{ .num_input_limbs = 1};
+            DECL_GATE_NAME(U32RangeCheckGate,U32RangeCheckGate_ins3, 20);
+            U32RangeCheckGate U32RangeCheckGate_ins4{ .num_input_limbs = 8};
+            DECL_GATE_NAME(U32RangeCheckGate,U32RangeCheckGate_ins4, 21);
+            U32SubtractionGate U32SubtractionGate_ins{ .num_ops = 11};
+            DECL_GATE_NAME(U32SubtractionGate,U32SubtractionGate_ins, 22);
+            RandomAccessGate RandomAccessGate_ins{ .bits = 4, .num_copies = 4, .num_extra_constants = 2};
+            DECL_GATE_NAME(RandomAccessGate,RandomAccessGate_ins, 23);
+            PoseidonGate PoseidonGate_ins;
+            DECL_GATE_NAME(PoseidonGate,PoseidonGate_ins, 24);
+
+            if (index == 2086137) {
+                printf("i: %d, local_constants: ", index);
+                local_constants.print_hex();
+                printf("i: %d, local_wires: ", index);
+                local_wires.print_hex();
+            }
+
+            GoldilocksField terms[num_gate_constraints];
+            auto evaluate_gate_constraints_base_batch = [index, public_inputs_hash, &constraint_terms_batch, &terms, gate_objs, selectors_info, local_constants, local_wires]() {
+                for (int row = 0; row < num_gates; ++row) {
+                    int selector_index = selectors_info.selector_indices[row];
+                    auto gate = gate_objs[row];
+
+                    auto compute_filter = [](int row, Range<int> group_range, GoldilocksField s,
+                                             bool many_selector) -> GoldilocksField {
+                        assert(group_range.contains(row));
+                        GoldilocksField res = {1};
+                        for (int i = group_range.first; i < group_range.second; ++i) {
+                            if (i == row)
+                                continue;
+                            res *= GoldilocksField::from_canonical_u64(i) - s;
+                        }
+
+                        const uint32_t UNUSED_SELECTOR = UINT32_MAX;
+
+                        if (many_selector) {
+                            res *= GoldilocksField::from_canonical_u64(UNUSED_SELECTOR) - s;
+                        }
+                        return res;
+                    };
+
+                    auto filter = compute_filter(
+                            row,
+                            selectors_info.groups[selector_index],
+                            local_constants[selector_index],
+                            num_selectors > 1
+                    );
+
+                    EvaluationVarsBasePacked vars = {
+                            .local_constants = local_constants.view(num_selectors, local_constants.len),
+                            .local_wires = local_wires,
+                            .public_inputs_hash = public_inputs_hash
+                    };
+
+//                    if (index == 2086137) {
+//                        printf("i: %d, row: %d, filter: ", index, row);
+//                        filter.print_hex(nullptr, GoldilocksField::newline);
+//                    }
+
+                    for (int i = 0; i < gate.num_constraints; ++i) {
+                        terms[i] = GoldilocksField{0};
+                    }
+
+                    auto fn = gate.func;
+                    auto yield_constr =  StridedConstraintConsumer{terms, &terms[gate.num_constraints]};
+                    ((gate.gate)->*fn)(vars, yield_constr);
+                    if (index == 2086137) {
+                        printf("i: %d, row: %d, terms: ", index, row);
+                        GoldilocksFieldView{terms, gate.num_constraints}.print_hex();
+                    }
+
+                    for (int i = 0; i < gate.num_constraints; ++i) {
+                        constraint_terms_batch[i] += terms[i] * filter;
+                    }
+
+                }
+            };
+
+            evaluate_gate_constraints_base_batch();
+        };
+        evaluate_gate_constraints_base_batch();
+        if (index == 2086137) {
+            printf("i: %d, constraint_terms: ", index);
+            GoldilocksFieldView{constraint_terms_batch, num_gate_constraints}.print_hex();
+        }
+        for (int i = num_gate_constraints-1; i >= 0; --i) {
+            reduce_with_powers(constraint_terms_batch[i]);
         }
 
+        constexpr int vanishing_partial_products_terms_len = num_challenges * num_routed_wires/max_degree;
+        GoldilocksField vanishing_partial_products_terms[vanishing_partial_products_terms_len];
         for (int i = 0; i < num_challenges; ++i) {
             auto z_x = local_zs[i];
             auto z_gx = next_zs[i];
@@ -576,18 +770,26 @@ void compute_quotient_values_kernel(
 //            );
 
             GoldilocksField prev_acc, next_acc;
-            assert(current_partial_products.len == num_routed_wires/max_degree-1);
-            for (int k = 0; k < num_routed_wires/max_degree; ++k) {
+            constexpr int partial_product_rounds = num_routed_wires/max_degree;
+            assert(current_partial_products.len == partial_product_rounds-1);
+            for (int k = 0; k < partial_product_rounds; ++k) {
                 GoldilocksField num_chunk_product = GoldilocksField::from_canonical_u64(1);
-                for (int j = 0; j < max_degree; ++j) {
+                for (int j = k*max_degree; j < (k+1)*max_degree; ++j) {
                     auto wire_value = local_wires[j];
                     auto k_i = k_is[j];
                     auto s_id = k_i * x;
-                    num_chunk_product *= wire_value + betas[i] * s_id + gammas[i];
+                    auto v = wire_value + betas[i] * s_id + gammas[i];
+                    num_chunk_product *= v;
+//                    if (index == 2086137) {
+//                        printf("i: %d, wi: %d, ", index, j);
+//                        wire_value.print_hex("wire_value", GoldilocksField::colum_space);
+//                        k_i.print_hex("k_i", GoldilocksField::colum_space);
+//                        x.print_hex("x", GoldilocksField::newline);
+//                        v.print_hex("v", GoldilocksField::newline);
+//                    }
                 }
-
                 GoldilocksField den_chunk_product = GoldilocksField::from_canonical_u64(1);
-                for (int j = 0; j < max_degree; ++j) {
+                for (int j = k*max_degree; j < (k+1)*max_degree; ++j) {
                     auto wire_value = local_wires[j];
                     auto s_sigma = s_sigmas[j];
                     den_chunk_product *= wire_value + betas[i] * s_sigma + gammas[i];
@@ -598,161 +800,62 @@ void compute_quotient_values_kernel(
                     prev_acc = next_acc;
                 }
 
-                if (k == num_routed_wires/max_degree-1)
+                if (k == partial_product_rounds-1)
                     next_acc = z_gx;
                 else
                     next_acc = current_partial_products[k];
 
-                reduce_with_powers(prev_acc * num_chunk_product - next_acc * den_chunk_product);
+                vanishing_partial_products_terms[i * partial_product_rounds + k] = (prev_acc * num_chunk_product - next_acc * den_chunk_product);
+
+//                if (index == 2086137) {
+//                    printf("i: %d, partial_product_checks: ", index);
+//                    GoldilocksFieldView{vanishing_partial_products_terms, vanishing_partial_products_terms_len}.print_hex();
+//                }
+
             }
         }
+        if (index == 2086137) {
+            printf("i: %d, term: ", index);
+            GoldilocksFieldView{vanishing_partial_products_terms, vanishing_partial_products_terms_len}.print_hex();
+        }
+        for (int i = vanishing_partial_products_terms_len-1; i >= 0; --i) {
+            reduce_with_powers(vanishing_partial_products_terms[i]);
+        }
 
-        struct SelectorsInfo {
-            int *selector_indices;
-            Range<int>* groups;
+        auto eval_l_0 = [z_h_on_coset_evals, rate_bits, degree_log](int index, GoldilocksField x) -> GoldilocksField {
+//            if ((GoldilocksField::from_canonical_u64(1 << degree_log) * (x - GoldilocksField{1})).data == 0xfff923c55a2e4a87)
+//                printf("index: %d\n", index);
+
+            return z_h_on_coset_evals[index % (1<<rate_bits)] *
+//                    (GoldilocksField::from_canonical_u64(1 << degree_log) * (x - GoldilocksField{1}));
+                    (GoldilocksField::from_canonical_u64(1 << degree_log) * (x - GoldilocksField{1})).inverse();
+
         };
 
-        int selector_indices[25] = {
-                0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4, 5
-        };
+        auto l_0_x = eval_l_0(index, x);
+        if (index == 2086137) {
+            l_0_x.print_hex("l_0_x", GoldilocksField::colum_space);
+            z_h_on_coset_evals[index%(1<<rate_bits)].print_hex("ev", GoldilocksField::colum_space);
+            auto den = (GoldilocksField::from_canonical_u64(1<<degree_log) * (x - GoldilocksField{1}));
+            den.print_hex("den", GoldilocksField::colum_space);
+            den.inverse().print_hex("denv", GoldilocksField::newline);
+        }
 
-        constexpr  int num_selectors = 6;
-        Range<int> groups[num_selectors] = {
-                Range<int>{0,6},
-                Range<int>{6,11},
-                Range<int>{11,16},
-                Range<int>{16,21},
-                Range<int>{21,24},
-                Range<int>{24,25}
-        };
-        SelectorsInfo selectors_info = {
-                .selector_indices = selector_indices,
-                .groups = groups
-        };
-
-        struct BaseGate {};
-        using FUNC = void (BaseGate::*)(EvaluationVarsBasePacked,GoldilocksField *,GoldilocksField *);
-
-        struct GateFUNC {
-            BaseGate* gate;
-            FUNC func;
-            int num_constraints;
-        };
-        constexpr const int num_gates = 25;
-        GateFUNC gate_objs[num_gates];
-
-#define DECL_GATE_NAME(TYPE, NAME, INDEX) \
-        gate_objs[INDEX] = GateFUNC{.gate = (BaseGate*)&NAME, .func = (FUNC)&TYPE::eval_unfiltered_base_packed, .num_constraints = NAME.num_constraints()};
-
-        NoopGate NoopGate_ins;
-        DECL_GATE_NAME(NoopGate,NoopGate_ins, 0);
-	ConstantGate ConstantGate_ins{ .num_consts = 2 };
-        DECL_GATE_NAME(ConstantGate, ConstantGate_ins, 1);
-
-	PublicInputGate PublicInputGate_ins;
-        DECL_GATE_NAME(PublicInputGate,PublicInputGate_ins, 2);
-
-	BaseSumGate<2> BaseSumGate_ins{ .num_limbs = 32 };
-        DECL_GATE_NAME(BaseSumGate<2>,BaseSumGate_ins, 3);
-	BaseSumGate<2> BaseSumGate_ins2{ .num_limbs = 63 };
-        DECL_GATE_NAME(BaseSumGate<2>,BaseSumGate_ins2, 4);
-	ArithmeticGate ArithmeticGate_ins{ .num_ops = 20 };
-        DECL_GATE_NAME(ArithmeticGate,ArithmeticGate_ins, 5);
-	BaseSumGate<4> BaseSumGate_ins3{ .num_limbs = 16 };
-        DECL_GATE_NAME(BaseSumGate<4>,BaseSumGate_ins3, 6);
-
-	ComparisonGate ComparisonGate_ins{ .num_bits = 32, .num_chunks = 16};
-        DECL_GATE_NAME(ComparisonGate,ComparisonGate_ins, 7);
-
-	U32AddManyGate U32AddManyGate_ins{ .num_addends = 0, .num_ops = 11};
-        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins, 8);
-	U32AddManyGate U32AddManyGate_ins2{ .num_addends = 11, .num_ops = 5};
-        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins2, 9);
-	U32AddManyGate U32AddManyGate_ins3{ .num_addends = 13, .num_ops = 5};
-        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins3, 10);
-	U32AddManyGate U32AddManyGate_ins4{ .num_addends = 15, .num_ops = 4};
-        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins4, 11);
-	U32AddManyGate U32AddManyGate_ins5{ .num_addends = 16, .num_ops = 4};
-        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins5, 12);
-	U32AddManyGate U32AddManyGate_ins6{ .num_addends = 2, .num_ops = 10};
-        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins6, 13);
-	U32AddManyGate U32AddManyGate_ins7{ .num_addends = 3, .num_ops = 9};
-        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins7, 14);
-	U32AddManyGate U32AddManyGate_ins8{ .num_addends = 5, .num_ops = 9};
-        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins8, 15);
-	U32AddManyGate U32AddManyGate_ins9{ .num_addends = 7, .num_ops = 8};
-        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins9, 16);
-	U32AddManyGate U32AddManyGate_ins10{ .num_addends = 9, .num_ops = 6};
-        DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins10, 17);
-	U32ArithmeticGate U32ArithmeticGate_ins{ .num_ops = 6};
-        DECL_GATE_NAME(U32ArithmeticGate,U32ArithmeticGate_ins, 18);
-	U32RangeCheckGate U32RangeCheckGate_ins2{ .num_input_limbs = 0};
-        DECL_GATE_NAME(U32RangeCheckGate,U32RangeCheckGate_ins2, 19);
-	U32RangeCheckGate U32RangeCheckGate_ins3{ .num_input_limbs = 1};
-        DECL_GATE_NAME(U32RangeCheckGate,U32RangeCheckGate_ins3, 20);
-	U32RangeCheckGate U32RangeCheckGate_ins4{ .num_input_limbs = 8};
-        DECL_GATE_NAME(U32RangeCheckGate,U32RangeCheckGate_ins4, 21);
-	U32SubtractionGate U32SubtractionGate_ins{ .num_ops = 11};
-        DECL_GATE_NAME(U32SubtractionGate,U32SubtractionGate_ins, 22);
-	RandomAccessGate RandomAccessGate_ins{ .bits = 4, .num_copies = 4, .num_extra_constants = 2};
-        DECL_GATE_NAME(RandomAccessGate,RandomAccessGate_ins, 23);
-	PoseidonGate PoseidonGate_ins;
-        DECL_GATE_NAME(PoseidonGate,PoseidonGate_ins, 24);
-
-
-        GoldilocksField constraints_batch[num_gate_constraints];
-        GoldilocksField terms[num_gate_constraints];
-        auto evaluate_gate_constraints_base_batch = [&constraints_batch, &terms, gate_objs, selectors_info, local_constants, local_wires]() {
-            for (int row = 0; row < num_gates; ++row) {
-                int selector_index = selectors_info.selector_indices[row];
-                auto gate = gate_objs[row];
-
-                auto compute_filter = [](int row, Range<int> group_range, GoldilocksField s, bool many_selector) -> GoldilocksField {
-//                        debug_assert!(group_range.contains(&row));
-                        GoldilocksField res = {1};
-                        for (int i = group_range.first; i < group_range.second; ++i) {
-                            if (i == row)
-                                continue;
-                            res *= GoldilocksField::from_canonical_u64(i) - s;
-                        }
-
-                    const uint32_t UNUSED_SELECTOR = UINT32_MAX;
-
-                    if (many_selector) {
-                        res *= GoldilocksField::from_canonical_u64(UNUSED_SELECTOR) - s;
-                    }
-                };
-
-                auto filter = compute_filter(
-                    row,
-                    selectors_info.groups[selector_index],
-                    local_constants[selector_index],
-                    num_selectors > 1
-                );
-
-                EvaluationVarsBasePacked vars = {
-                        .local_constants = local_constants.view(num_selectors, local_constants.len),
-                        .local_wires = local_wires
-                };
-                auto fn = gate.func;
-                ((gate.gate)->*fn)(vars, constraints_batch, terms);
-                for (int i = 0; i < gate.num_constraints; ++i) {
-                    constraints_batch[i] += terms[i] * filter;
-                }
-
-            }
-        };
-
-        evaluate_gate_constraints_base_batch();
-
-        for (int i = 0; i < num_gate_constraints; ++i) {
-            reduce_with_powers(constraints_batch[i]);
+        for (int i = num_challenges-1; i >= 0; --i) {
+            auto z_x = local_zs[i];
+//            res[0] = GoldilocksField::from_canonical_u64(0);
+            reduce_with_powers(l_0_x * z_x.sub_one());
         }
 
 
-        auto denominator_inv = z_h_on_coset_inverses[index % rate_bits];
+        auto denominator_inv = z_h_on_coset_inverses[index % (1<<rate_bits)];
         for (int i = 0; i < num_challenges; ++i) {
             res[i] *= denominator_inv;
+        }
+
+        if (index == 2086137) {
+            printf("i: %d, res: ", index);
+            GoldilocksFieldView{res, num_challenges}.print_hex();
         }
 
         outs[index*2]   = res[0];

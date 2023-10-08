@@ -1,6 +1,6 @@
 struct U32ArithmeticGate INHERIT_BASE {
     usize num_ops;
-    typedef U32AddManyGate Self;
+    typedef U32ArithmeticGate Self;
 
     __device__ inline
     usize wire_ith_multiplicand_0(usize i) {
@@ -50,8 +50,8 @@ struct U32ArithmeticGate INHERIT_BASE {
     }
     __device__ inline
     usize wire_ith_output_jth_limb(usize i, usize j) {
-//        assert(i < this->num_ops);
-//        assert(j < Self::num_limbs());
+        assert(i < this->num_ops);
+        assert(j < Self::num_limbs());
         return routed_wires_per_op() * this->num_ops + Self::num_limbs() * i + j;
     }
 

@@ -47,13 +47,14 @@ impl Hash for GoldilocksField {
 
 impl Display for GoldilocksField {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Display::fmt(&self.0, f)
+        // Display::fmt(&self.0, f)
+        write!(f, "{:x}", &self.0)
     }
 }
 
 impl Debug for GoldilocksField {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Debug::fmt(&self.0, f)
+        write!(f, "{:x}", &self.0)
     }
 }
 

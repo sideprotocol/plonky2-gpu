@@ -78,17 +78,17 @@ struct ComparisonGate  INHERIT_BASE {
 
         // Get chunks and assert that they match
         auto first_chunks = [this, vars](int i) -> GoldilocksField {
-            vars.local_wires[this->wire_first_chunk_val(i)];
+            return vars.local_wires[this->wire_first_chunk_val(i)];
         };
 
         auto second_chunks = [this, vars](int i) -> GoldilocksField {
-            vars.local_wires[this->wire_second_chunk_val(i)];
+            return vars.local_wires[this->wire_second_chunk_val(i)];
         };
 
         auto first_chunks_combined = reduce_with_powers(
-                Range<usize>{0, this->num_chunks}, first_chunks, GoldilocksField::from_canonical_usize(1 << this->chunk_bits()));
+                Range<int>{0, this->num_chunks}, first_chunks, GoldilocksField::from_canonical_usize(1 << this->chunk_bits()));
         auto second_chunks_combined = reduce_with_powers(
-                Range<usize>{0, this->num_chunks}, second_chunks, GoldilocksField::from_canonical_usize(1 << this->chunk_bits()));
+                Range<int>{0, this->num_chunks}, second_chunks, GoldilocksField::from_canonical_usize(1 << this->chunk_bits()));
 
         yield_constr.one(first_chunks_combined - first_input);
         yield_constr.one(second_chunks_combined - second_input);
@@ -135,12 +135,12 @@ struct ComparisonGate  INHERIT_BASE {
         };
 
         // Range-check the bits.
-        for (int i = 0; i < this->chunk_bits(); ++i) {
+        for (int i = 0; i < this->chunk_bits()+1; ++i) {
             auto bit = most_significant_diff_bits(i);
             yield_constr.one(bit * (GoldilocksField{1} - bit));
         }
 
-        auto bits_combined = reduce_with_powers(Range<usize>{0, this->chunk_bits() + 1},  most_significant_diff_bits, GoldilocksField{2});
+        auto bits_combined = reduce_with_powers(Range<int>{0, this->chunk_bits() + 1},  most_significant_diff_bits, GoldilocksField{2});
         auto two_n = GoldilocksField::from_canonical_u64(1 << this->chunk_bits());
         yield_constr.one((most_significant_diff + two_n) - bits_combined);
 

@@ -1,6 +1,6 @@
 struct U32SubtractionGate INHERIT_BASE {
     usize num_ops;
-    typedef U32AddManyGate Self;
+    typedef U32SubtractionGate Self;
 
 
 
@@ -32,12 +32,12 @@ struct U32SubtractionGate INHERIT_BASE {
     }
 
     __device__ inline
-    usize limb_bits() {
+    static constexpr usize limb_bits() {
         return 2; 
     }
     // We have limbs for the 32 bits of `output_result`.
     __device__ inline
-    usize num_limbs() {
+    static constexpr usize num_limbs() {
         return 32 / Self::limb_bits(); 
     }
 

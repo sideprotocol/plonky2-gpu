@@ -117,6 +117,7 @@ pub trait Gate<F: RichField + Extendable<D>, const D: usize>: 'static + Send + S
         selector_index: usize,
         group_range: Range<usize>,
         num_selectors: usize,
+        indices_batch: &[usize],
     ) -> Vec<F> {
         let filters: Vec<_> = vars_batch
             .iter()
@@ -129,8 +130,19 @@ pub trait Gate<F: RichField + Extendable<D>, const D: usize>: 'static + Send + S
                 )
             })
             .collect();
+
+        // if indices_batch[25] == 2086137 {
+        //     println!("i: {}, row: {}, filter: {:?}", indices_batch[25], row, filters[25]);
+        // }
+
         vars_batch.remove_prefix(num_selectors);
         let mut res_batch = self.eval_unfiltered_base_batch(vars_batch);
+
+        if indices_batch[25] == 2086137 {
+            let res = res_batch.chunks(filters.len()).map(|cs|cs[25]).collect::<Vec<_>>();
+            println!("i: {}, row: {}, terms: {:?}", indices_batch[25], row, res);
+        }
+
         for res_chunk in res_batch.chunks_exact_mut(filters.len()) {
             batch_multiply_inplace(res_chunk, &filters);
         }

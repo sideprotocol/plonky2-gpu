@@ -1,6 +1,6 @@
 struct U32RangeCheckGate INHERIT_BASE {
     usize num_input_limbs;
-    typedef U32AddManyGate Self;
+    typedef U32RangeCheckGate Self;
 
     static constexpr usize AUX_LIMB_BITS = 2;
     static constexpr usize BASE = 1 << AUX_LIMB_BITS;
@@ -33,7 +33,7 @@ struct U32RangeCheckGate INHERIT_BASE {
         auto base = GoldilocksField::from_canonical_usize(BASE);
         for (int i = 0; i < this->num_input_limbs; ++i) {
             auto input_limb = vars.local_wires[this->wire_ith_input_limb(i)];
-            auto aux_limbs_range = Range<usize>{0, this->aux_limbs_per_input_limb()};
+            auto aux_limbs_range = Range<int>{0, this->aux_limbs_per_input_limb()};
             auto aux_limbs = [vars, this, i](int j) -> GoldilocksField {
                 return vars.local_wires[this->wire_ith_input_limb_jth_aux_limb(i, j)];
             };
@@ -54,12 +54,10 @@ struct U32RangeCheckGate INHERIT_BASE {
     __device__ inline
     VIRTUAL void eval_unfiltered_base_packed(
             EvaluationVarsBasePacked vars,
-            GoldilocksField* constraints_batch,
-            GoldilocksField* terms
-    ) OVERRIDE {
+            StridedConstraintConsumer yield_constr) OVERRIDE {
         eval_unfiltered_base_one(
                 vars,
-                StridedConstraintConsumer{terms}
+                yield_constr
         );
     }
 

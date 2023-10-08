@@ -129,7 +129,7 @@ pub(crate) fn eval_vanishing_poly_base_batch<
     let num_gate_constraints = common_data.num_gate_constraints;
 
     let constraint_terms_batch =
-        evaluate_gate_constraints_base_batch::<F, C, D>(common_data, vars_batch);
+        evaluate_gate_constraints_base_batch::<F, C, D>(common_data, vars_batch, indices_batch);
     debug_assert!(constraint_terms_batch.len() == n * num_gate_constraints);
 
     let num_challenges = common_data.config.num_challenges;
@@ -154,8 +154,17 @@ pub(crate) fn eval_vanishing_poly_base_batch<
         let s_sigmas = s_sigmas_batch[k];
 
         let constraint_terms = PackedStridedView::new(&constraint_terms_batch, n, k);
+        if (index == 2086137 ) {
+            let  res = constraint_terms.iter().map(|f| *f).collect::<Vec<_>>();
+            println!("i: {}, constraint_terms: {:?}", index, res);
+        }
 
         let l_0_x = z_h_on_coset.eval_l_0(index, x);
+        if index == 2086137 {
+            let ev = z_h_on_coset.eval(index);
+            let den = (z_h_on_coset.n * (x - F::ONE));
+            println!("l_0_x: {:?}, ev: {:?}, den: {:?}, denv: {:?}", l_0_x, ev, den, den.inverse());
+        }
         for i in 0..num_challenges {
             let z_x = local_zs[i];
             let z_gx = next_zs[i];
@@ -165,7 +174,11 @@ pub(crate) fn eval_vanishing_poly_base_batch<
                 let wire_value = vars.local_wires[j];
                 let k_i = common_data.k_is[j];
                 let s_id = k_i * x;
-                wire_value + betas[i] * s_id + gammas[i]
+                let v = wire_value + betas[i] * s_id + gammas[i];
+                // if index == 2086137 {
+                //     println!("i: {}, wi: {}, wire_value: {:?}, ki: {:?}, x: {:?}, v: {:?}", index, j, wire_value, k_i, x, v);
+                // }
+                v
             }));
             denominator_values.extend((0..num_routed_wires).map(|j| {
                 let wire_value = vars.local_wires[j];
@@ -186,10 +199,19 @@ pub(crate) fn eval_vanishing_poly_base_batch<
             );
             vanishing_partial_products_terms.extend(partial_product_checks);
 
+            // if (index == 2086137 ) {
+            //     println!("i: {}, numerator_values: {:?}", index, numerator_values);
+            //     println!("i: {}, denominator_values: {:?}", index, denominator_values);
+            //     println!("i: {}, partial_product_checks: {:?}", index, partial_product_checks);
+            // }
+
             numerator_values.clear();
             denominator_values.clear();
         }
 
+        if (index == 2086137 ) {
+            println!("i: {}, term: {:?}", index, vanishing_partial_products_terms);
+        }
         let vanishing_terms = vanishing_z_1_terms
             .iter()
             .chain(vanishing_partial_products_terms.iter())
@@ -249,8 +271,17 @@ pub fn evaluate_gate_constraints_base_batch<
 >(
     common_data: &CommonCircuitData<F, D>,
     vars_batch: EvaluationVarsBaseBatch<F>,
+    indices_batch: &[usize],
 ) -> Vec<F> {
     let mut constraints_batch = vec![F::ZERO; common_data.num_gate_constraints * vars_batch.len()];
+    if indices_batch[25] == 2086137 {
+        let vars_view = vars_batch.view(25);
+        let res = vars_view.local_constants.iter().map(|f| *f).collect::<Vec<_>>();
+        println!("i: {}, local_constants: {:?}", indices_batch[25], res);
+        let res = vars_view.local_wires.iter().map(|f| *f).collect::<Vec<_>>();
+        println!("i: {}, local_wires: {:?}",     indices_batch[25], res);
+
+    }
     for (i, gate) in common_data.gates.iter().enumerate() {
         let selector_index = common_data.selectors_info.selector_indices[i];
         let gate_constraints_batch = gate.0.eval_filtered_base_batch(
@@ -259,6 +290,7 @@ pub fn evaluate_gate_constraints_base_batch<
             selector_index,
             common_data.selectors_info.groups[selector_index].clone(),
             common_data.selectors_info.num_selectors(),
+            indices_batch,
         );
         debug_assert!(
             gate_constraints_batch.len() <= constraints_batch.len(),

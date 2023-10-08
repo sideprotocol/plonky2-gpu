@@ -392,10 +392,15 @@ int main()
     thcnt = 15000;
     nthreads = 32;
     printf("values_num_per_extpoly: %d, log_len: %d\n", values_num_per_extpoly, log_len);
+    PoseidonHasher::HashOut public_inputs_hash = {
+            GoldilocksField{0x672c5e6c12ad3476}, GoldilocksField{0xca5c2e49acfad27e},
+            GoldilocksField{0x296be18388d15f70}, GoldilocksField{0x66b42e146a70d96d}
+    };;
     compute_quotient_values_kernel<<<(thcnt+nthreads-1)/nthreads, nthreads, 0, stream>>>(
             log_len, rate_bits,
             points.ptr,
             d_outs,
+            public_inputs_hash,
 
             constants_sigmas_commitment_leaves.ptr,     constants_sigmas_commitment_leaf_len,
             zs_partial_products_commitment_leaves.ptr,  zs_partial_products_commitment_leaf_len,
