@@ -721,7 +721,7 @@ fn compute_quotient_polys<
                 let partial_products =
                     &local_zs_partial_products[common_data.partial_products_range()];
 
-                if i == 2086137 {
+                if i == 1048576 {
                     println!("i: {}, len: {}, lcs: {:?}", i, local_constants_sigmas.len(), local_constants_sigmas);
                     println!("i: {}, len: {}, lw: {:?}", i, local_wires.len(), local_wires);
                     println!("i: {}, len: {}, lzpp: {:?}", i, local_zs_partial_products.len(), local_zs_partial_products);
@@ -786,7 +786,7 @@ fn compute_quotient_polys<
                     .iter_mut()
                     .for_each(|v| *v *= denominator_inv);
 
-                if i == 2086137 {
+                if i == 1048576 {
                     println!("i: {}, res: {:?}", i, quotient_values);
                 }
             }
@@ -796,18 +796,36 @@ fn compute_quotient_polys<
     );
 
     println!("quotient_values len:{}, itemLen:{}", quotient_values.len(), quotient_values[0].len());
+    unsafe
+    {
+        let mut file = File::create("quotient_values.bin").unwrap();
+        let v = quotient_values.concat();
+        file.write_all(std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len()*8));
+    }
 
     let values = timed!(
         timing,
         "transpose",
         transpose(&quotient_values));
 
-    timed!(
+    let res: Vec<PolynomialCoeffs<F>> = timed!(
         timing,
         "coset ifft",
         values.into_par_iter()
             .map(PolynomialValues::new)
             .map(|values| values.coset_ifft(F::coset_shift()))
             .collect()
-    )
+    );
+
+    unsafe
+    {
+        let mut file = File::create("quotient_values2.bin").unwrap();
+        let v = res.iter().flat_map(|f|f.coeffs.clone()).collect::<Vec<_>>();
+        file.write_all(std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len()*8));
+    }
+
+    // let n_inv = F::inverse_2exp(21);
+    // println!("n_inv with 21: {:?}", n_inv);
+    // println!("v1: {:?}, v2: {:?}", res[0].coeffs[1048576], res[1].coeffs[1048576]);
+    res
 }

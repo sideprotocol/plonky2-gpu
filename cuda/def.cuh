@@ -535,8 +535,12 @@ struct  GoldilocksField{
     }
 
     __device__ inline
-    GoldilocksField operator-() {
-        return GoldilocksField{-this->data};
+    GoldilocksField operator-() const {
+        if (this->data == 0) {
+            return GoldilocksField{0};
+        } else {
+            return GoldilocksField{GoldilocksField::ORDER - this->to_canonical_u64()};
+        }
     }
 
     __device__ inline

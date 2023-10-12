@@ -154,13 +154,13 @@ pub(crate) fn eval_vanishing_poly_base_batch<
         let s_sigmas = s_sigmas_batch[k];
 
         let constraint_terms = PackedStridedView::new(&constraint_terms_batch, n, k);
-        if (index == 2086137 ) {
+        if (index == 1048576 ) {
             let  res = constraint_terms.iter().map(|f| *f).collect::<Vec<_>>();
             println!("i: {}, constraint_terms: {:?}", index, res);
         }
 
         let l_0_x = z_h_on_coset.eval_l_0(index, x);
-        if index == 2086137 {
+        if index == 1048576 {
             let ev = z_h_on_coset.eval(index);
             let den = (z_h_on_coset.n * (x - F::ONE));
             println!("l_0_x: {:?}, ev: {:?}, den: {:?}, denv: {:?}", l_0_x, ev, den, den.inverse());
@@ -175,7 +175,7 @@ pub(crate) fn eval_vanishing_poly_base_batch<
                 let k_i = common_data.k_is[j];
                 let s_id = k_i * x;
                 let v = wire_value + betas[i] * s_id + gammas[i];
-                // if index == 2086137 {
+                // if index == 1048576 {
                 //     println!("i: {}, wi: {}, wire_value: {:?}, ki: {:?}, x: {:?}, v: {:?}", index, j, wire_value, k_i, x, v);
                 // }
                 v
@@ -199,7 +199,7 @@ pub(crate) fn eval_vanishing_poly_base_batch<
             );
             vanishing_partial_products_terms.extend(partial_product_checks);
 
-            // if (index == 2086137 ) {
+            // if (index == 1048576 ) {
             //     println!("i: {}, numerator_values: {:?}", index, numerator_values);
             //     println!("i: {}, denominator_values: {:?}", index, denominator_values);
             //     println!("i: {}, partial_product_checks: {:?}", index, partial_product_checks);
@@ -209,7 +209,7 @@ pub(crate) fn eval_vanishing_poly_base_batch<
             denominator_values.clear();
         }
 
-        if (index == 2086137 ) {
+        if (index == 1048576 ) {
             println!("i: {}, term: {:?}", index, vanishing_partial_products_terms);
         }
         let vanishing_terms = vanishing_z_1_terms
@@ -274,7 +274,7 @@ pub fn evaluate_gate_constraints_base_batch<
     indices_batch: &[usize],
 ) -> Vec<F> {
     let mut constraints_batch = vec![F::ZERO; common_data.num_gate_constraints * vars_batch.len()];
-    if indices_batch[25] == 2086137 {
+    if indices_batch[25] == 1048576 {
         let vars_view = vars_batch.view(25);
         let res = vars_view.local_constants.iter().map(|f| *f).collect::<Vec<_>>();
         println!("i: {}, local_constants: {:?}", indices_batch[25], res);

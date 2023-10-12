@@ -64,6 +64,7 @@ pub struct CudaInvContext<F: RichField + Extendable<D>, C: GenericConfig<D, F = 
     pub root_table_device: DeviceBuffer::<F>,
     pub root_table_device2: DeviceBuffer::<F>,
     pub shift_powers_device: DeviceBuffer::<F>,
+    pub shift_inv_powers_device: DeviceBuffer::<F>,
 
     pub ctx: Context,
 }

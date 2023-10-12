@@ -8,6 +8,7 @@ use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 
 use anyhow::{ensure, Result};
 use itertools::Itertools;
+use log::info;
 use plonky2_util::log2_strict;
 use serde::{Deserialize, Serialize};
 
@@ -61,7 +62,10 @@ impl<F: Field> PolynomialValues<F> {
 
     /// Returns the polynomial whose evaluation on the coset `shift*H` is `self`.
     pub fn coset_ifft(self, shift: F) -> PolynomialCoeffs<F> {
+        // info!("before ifft: {:?}", self.values[2086137]);
         let mut shifted_coeffs = self.ifft();
+        // info!("after  ifft: {:?}", shifted_coeffs.coeffs[2086137]);
+
         shifted_coeffs
             .coeffs
             .iter_mut()

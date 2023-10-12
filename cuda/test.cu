@@ -23,28 +23,28 @@ __global__
 void test()
 {
 //    GoldilocksField n_inv = {.data = 18446673700670423041ULL};
-//    GoldilocksField v = {.data = 0x000000002EF7A1BC};
-//    printf("inv: %016lX\n", n_inv.data);
-//    printf("n  : %016lX\n", v.data);
+    GoldilocksField v = {.data = 0xfffffffeffe00001};
+    printf("inv: %016lx\n", v.inverse().data);
+    printf("n  : %016lx\n", v.data);
 //    printf("res: %016lX\n", (n_inv * v - n_inv).data);
 
-    GoldilocksField data[8] = {
-	{12057761340118092379ULL},
-	{6921394802928742357ULL},
-	{401572749463996457ULL},
-	{8075242603528285606ULL},
-	{16383556155787439553ULL},
-	{18045582516498195573ULL},
-	{7296969412159674050ULL},
-	{8317318176954617326ULL}
-    };
-
-    GoldilocksField state[SPONGE_WIDTH] = {0};
-    for (int k = 0; k < SPONGE_RATE; ++k)
-        state[k] = data[k];
-    PoseidonHasher::permute_poseidon(state);
-    auto out =  *(PoseidonHasher::HashOut*)state;
-    PRINT_HEX("hash", out);
+//    GoldilocksField data[8] = {
+//	{12057761340118092379ULL},
+//	{6921394802928742357ULL},
+//	{401572749463996457ULL},
+//	{8075242603528285606ULL},
+//	{16383556155787439553ULL},
+//	{18045582516498195573ULL},
+//	{7296969412159674050ULL},
+//	{8317318176954617326ULL}
+//    };
+//
+//    GoldilocksField state[SPONGE_WIDTH] = {0};
+//    for (int k = 0; k < SPONGE_RATE; ++k)
+//        state[k] = data[k];
+//    PoseidonHasher::permute_poseidon(state);
+//    auto out =  *(PoseidonHasher::HashOut*)state;
+//    PRINT_HEX("hash", out);
 }
 
 template <class T>
@@ -121,6 +121,7 @@ int main()
     auto root_table  = read_fvec_from_bin("roots.bin");
     auto root_table2 = read_fvec_from_bin("roots2.bin");
     auto shift_powers = read_fvec_from_bin("powers.bin");
+    auto shift_inv_powers = read_fvec_from_bin("inv-powers.bin");
 
 
 //    auto originalVector = values_flatten;
@@ -160,6 +161,14 @@ int main()
     CUDA_ASSERT(cudaMalloc(&d_shift_powers, values_num_per_poly * sizeof(GoldilocksField)));
 
     CUDA_ASSERT(cudaMemcpyAsync(d_shift_powers, &shift_powers[0],  values_num_per_poly * sizeof(GoldilocksField),
+                                cudaMemcpyHostToDevice, stream));
+
+    cudaStreamSynchronize(stream);
+
+    GoldilocksField *d_shift_inv_powers;
+    CUDA_ASSERT(cudaMalloc(&d_shift_inv_powers, values_num_per_extpoly * sizeof(GoldilocksField)));
+
+    CUDA_ASSERT(cudaMemcpyAsync(d_shift_inv_powers, &shift_inv_powers[0],  values_num_per_extpoly * sizeof(GoldilocksField),
                                 cudaMemcpyHostToDevice, stream));
 
     cudaStreamSynchronize(stream);
@@ -363,8 +372,16 @@ int main()
     auto z_h_on_coset_evals = read_fvec_to_dev("z_h_on_coset.evals.bin");
     auto z_h_on_coset_inverses = read_fvec_to_dev("z_h_on_coset.inverses.bin");
 
-    GoldilocksField *d_outs;
-    CUDA_ASSERT(cudaMalloc(&d_outs, values_num_per_extpoly*2*sizeof(GoldilocksField)));
+    GoldilocksField *d_outs, *d_quotient_polys;
+//    CUDA_ASSERT(cudaMalloc(&d_outs, values_num_per_extpoly*2*sizeof(GoldilocksField)));
+
+    d_outs = (GoldilocksField*)start_p;
+    start_p += values_num_per_extpoly*2*sizeof(GoldilocksField);
+
+    d_quotient_polys = (GoldilocksField*)start_p;
+    start_p += values_num_per_extpoly*2*sizeof(GoldilocksField);
+
+    assert(start_p < end_p);
 
     cudaStreamSynchronize(stream);
     size_t total_dev_use = start_p-(uint8_t*)d_ext_values_flatten;
@@ -389,7 +406,7 @@ int main()
     assert(gammas.len == num_challenges);
 
     start = clock();
-    thcnt = 15000;
+    thcnt = 20000;
     nthreads = 32;
     printf("values_num_per_extpoly: %d, log_len: %d\n", values_num_per_extpoly, log_len);
     PoseidonHasher::HashOut public_inputs_hash = {
@@ -423,5 +440,66 @@ int main()
     cudaStreamSynchronize(stream);
     printf("compute_quotient_values_kernel elapsed: %.2lf\n", (double )(clock()-start) / CLOCKS_PER_SEC * 1000);
 
+    {
+        std::vector<GoldilocksField> outs(num_challenges*values_num_per_extpoly);
+        CUDA_ASSERT(cudaMemcpyAsync(&outs[0], d_outs,  outs.size()*sizeof(GoldilocksField), cudaMemcpyDeviceToHost, stream));
+        cudaStreamSynchronize(stream);
+
+        std::ofstream file("quotient_values.bin", std::ios::binary);
+        if (file.is_open()) {
+            file.write(reinterpret_cast<const char*>(outs.data()), outs.size() * sizeof(GoldilocksField));
+            file.close();
+            std::cout << "Data written to file." << std::endl;
+        } else {
+            std::cerr << "Failed to open file." << std::endl;
+        }
+
+//        printf("v1: %lx, v2: %lx\n", outs[2086137].data, outs[2086137 + values_num_per_extpoly].data);
+    }
+
+    start = clock();
+    thcnt = values_num_per_extpoly;
+    nthreads = 32;
+    transpose_kernel<<<(thcnt+nthreads-1)/nthreads, nthreads, 0, stream>>>(d_outs, d_quotient_polys, values_num_per_extpoly, num_challenges);
+    cudaStreamSynchronize(stream);
+    printf("transpose_kernel elapsed: %.2lf\n", (double )(clock()-start) / CLOCKS_PER_SEC * 1000);
+
+    start = clock();
+    GoldilocksField n_inv_ext = {.data = 0xfffff7ff00000801ULL};
+    ifft_kernel<<<num_challenges, 32*8, 0, stream>>>(d_quotient_polys, num_challenges, values_num_per_extpoly, log_len+rate_bits, d_root_table2, n_inv_ext);
+    cudaStreamSynchronize(stream);
+    printf("ifft_kernel elapsed: %.2lf\n", (double )(clock()-start) / CLOCKS_PER_SEC * 1000);
+
+    {
+        std::vector<GoldilocksField> outs(num_challenges*values_num_per_extpoly);
+        CUDA_ASSERT(cudaMemcpyAsync(&outs[0], d_quotient_polys,  outs.size()*sizeof(GoldilocksField), cudaMemcpyDeviceToHost, stream));
+        cudaStreamSynchronize(stream);
+
+        printf("v1: %lx, v2: %lx\n", outs[2086137].data, outs[2086137 + values_num_per_extpoly].data);
+    }
+
+    start = clock();
+    thcnt = values_num_per_extpoly*num_challenges;
+    nthreads = 32;
+    mul_kernel<<<(thcnt+nthreads-1)/nthreads, nthreads, 0, stream>>>(d_quotient_polys, num_challenges, values_num_per_extpoly, d_shift_inv_powers);
+    cudaStreamSynchronize(stream);
+    printf("mul_kernel elapsed: %.2lf\n", (double )(clock()-start) / CLOCKS_PER_SEC * 1000);
+
+    {
+        std::vector<GoldilocksField> outs(num_challenges*values_num_per_extpoly);
+        CUDA_ASSERT(cudaMemcpyAsync(&outs[0], d_quotient_polys,  outs.size()*sizeof(GoldilocksField), cudaMemcpyDeviceToHost, stream));
+        cudaStreamSynchronize(stream);
+
+        std::ofstream file("quotient_values2.bin", std::ios::binary);
+        if (file.is_open()) {
+            file.write(reinterpret_cast<const char*>(outs.data()), outs.size() * sizeof(GoldilocksField));
+            file.close();
+            std::cout << "Data written to file." << std::endl;
+        } else {
+            std::cerr << "Failed to open file." << std::endl;
+        }
+
+//        printf("v1: %lx, v2: %lx\n", outs[2086137].data, outs[2086137 + values_num_per_extpoly].data);
+    }
     return 0;
 }

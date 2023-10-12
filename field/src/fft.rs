@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 use core::cmp::{max, min};
+use log::info;
 
 use plonky2_util::{log2_strict, reverse_index_bits_in_place};
 use unroll::unroll_for_loops;
@@ -79,7 +80,14 @@ pub fn ifft_with_options<F: Field>(
     let n_inv = F::inverse_2exp(lg_n);
 
     let PolynomialValues { values: mut buffer } = poly;
+    // if buffer.len() > 2086137 {
+    //     info!("before fft_dispatch v1: {:?}", buffer[0]);
+    //     info!("before fft_dispatch v2: {:?}", buffer[1<<20]);
+    // }
     fft_dispatch(&mut buffer, zero_factor, root_table);
+    // if buffer.len() > 2086137 {
+    //     info!("after  fft_dispatch v1: {:?}", buffer[0]);
+    // }
 
     // We reverse all values except the first, and divide each by n.
     buffer[0] *= n_inv;
@@ -155,8 +163,19 @@ fn fft_classic_simd<P: PackedField>(
                 let u = packed_values[k + j];
                 packed_values[k + j] = u + t;
                 packed_values[k + half_packed_m + j] = u - t;
+
+                // if (lg_half_m == 0 && packed_values.len() > 2086137 && j == 0 && k == 0) {
+                //     info!("in round 0 k: {} v1: {:?}, omega: {:?}, t: {:?}, tt: {:?}, u: {:?}, kk:{}, j:{}\n",
+                //         lg_half_m, packed_values[0], omega, t, packed_values[k + half_packed_m + j], u, k, j);
+                // }
+
             }
         }
+
+        // if packed_values.len() > 2086137 {
+        //     info!("in round: {} v1: {:?}", lg_half_m, packed_values[0]);
+        // }
+
     }
 }
 
@@ -168,6 +187,10 @@ fn fft_classic_simd<P: PackedField>(
 /// definitely zero.
 pub(crate) fn fft_classic<F: Field>(values: &mut [F], r: usize, root_table: &FftRootTable<F>) {
     reverse_index_bits_in_place(values);
+    // if values.len() > 2086137 {
+    //     info!("after  reverse v1: {:?}", values[0]);
+    //     info!("after  reverse v2: {:?}", values[1]);
+    // }
 
     let n = values.len();
     let lg_n = log2_strict(n);

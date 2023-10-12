@@ -138,7 +138,7 @@ pub trait Gate<F: RichField + Extendable<D>, const D: usize>: 'static + Send + S
         vars_batch.remove_prefix(num_selectors);
         let mut res_batch = self.eval_unfiltered_base_batch(vars_batch);
 
-        if indices_batch[25] == 2086137 {
+        if indices_batch[25] == 1048576 {
             let res = res_batch.chunks(filters.len()).map(|cs|cs[25]).collect::<Vec<_>>();
             println!("i: {}, row: {}, terms: {:?}", indices_batch[25], row, res);
         }
