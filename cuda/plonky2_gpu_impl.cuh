@@ -563,16 +563,16 @@ void compute_quotient_values_kernel(
 
         auto partial_products = local_zs_partial_products.view(num_challenges);
 
-        if (index == 1048576) {
-            printf("i: %d, len: %d, lcs: ", index, local_constants_sigmas.len);
-            local_constants_sigmas.print_hex();
-            printf("i: %d, len: %d, lw: ", index, local_wires.len);
-            local_wires.print_hex();
-            printf("i: %d, len: %d, lzpp: ", index, local_zs_partial_products.len);
-            local_zs_partial_products.print_hex();
-            printf("i: %d, len: %d, nzs: ", index, next_zs.len);
-            next_zs.print_hex();
-        }
+//        if (index == 1048576) {
+//            printf("i: %d, len: %d, lcs: ", index, local_constants_sigmas.len);
+//            local_constants_sigmas.print_hex();
+//            printf("i: %d, len: %d, lw: ", index, local_wires.len);
+//            local_wires.print_hex();
+//            printf("i: %d, len: %d, lzpp: ", index, local_zs_partial_products.len);
+//            local_zs_partial_products.print_hex();
+//            printf("i: %d, len: %d, nzs: ", index, next_zs.len);
+//            next_zs.print_hex();
+//        }
 
 //        let constraint_terms_batch =
 //        evaluate_gate_constraints_base_batch::<F, C, D>(common_data, vars_batch);
@@ -684,12 +684,12 @@ void compute_quotient_values_kernel(
             PoseidonGate PoseidonGate_ins;
             DECL_GATE_NAME(PoseidonGate,PoseidonGate_ins, 24);
 
-            if (index == 1048576) {
-                printf("i: %d, local_constants: ", index);
-                local_constants.print_hex();
-                printf("i: %d, local_wires: ", index);
-                local_wires.print_hex();
-            }
+//            if (index == 1048576) {
+//                printf("i: %d, local_constants: ", index);
+//                local_constants.print_hex();
+//                printf("i: %d, local_wires: ", index);
+//                local_wires.print_hex();
+//            }
 
             GoldilocksField terms[num_gate_constraints];
             auto evaluate_gate_constraints_base_batch = [index, public_inputs_hash, &constraint_terms_batch, &terms, gate_objs, selectors_info, local_constants, local_wires]() {
@@ -728,10 +728,10 @@ void compute_quotient_values_kernel(
                             .public_inputs_hash = public_inputs_hash
                     };
 
-                    if (index == 1048576) {
-                        printf("i: %d, row: %d, filter: ", index, row);
-                        filter.print_hex(nullptr, GoldilocksField::newline);
-                    }
+//                    if (index == 1048576) {
+//                        printf("i: %d, row: %d, filter: ", index, row);
+//                        filter.print_hex(nullptr, GoldilocksField::newline);
+//                    }
 
                     for (int i = 0; i < gate.num_constraints; ++i) {
                         terms[i] = GoldilocksField{0};
@@ -740,10 +740,10 @@ void compute_quotient_values_kernel(
                     auto fn = gate.func;
                     auto yield_constr =  StridedConstraintConsumer{terms, &terms[gate.num_constraints]};
                     ((gate.gate)->*fn)(vars, yield_constr);
-                    if (index == 1048576) {
-                        printf("i: %d, row: %d, terms: ", index, row);
-                        GoldilocksFieldView{terms, gate.num_constraints}.print_hex();
-                    }
+//                    if (index == 1048576) {
+//                        printf("i: %d, row: %d, terms: ", index, row);
+//                        GoldilocksFieldView{terms, gate.num_constraints}.print_hex();
+//                    }
 
                     for (int i = 0; i < gate.num_constraints; ++i) {
                         constraint_terms_batch[i] += terms[i] * filter;
@@ -755,10 +755,10 @@ void compute_quotient_values_kernel(
             evaluate_gate_constraints_base_batch();
         };
         evaluate_gate_constraints_base_batch();
-        if (index == 1048576) {
-            printf("i: %d, constraint_terms: ", index);
-            GoldilocksFieldView{constraint_terms_batch, num_gate_constraints}.print_hex();
-        }
+//        if (index == 1048576) {
+//            printf("i: %d, constraint_terms: ", index);
+//            GoldilocksFieldView{constraint_terms_batch, num_gate_constraints}.print_hex();
+//        }
         for (int i = num_gate_constraints-1; i >= 0; --i) {
             reduce_with_powers(constraint_terms_batch[i]);
         }
@@ -792,13 +792,13 @@ void compute_quotient_values_kernel(
                     auto s_id = k_i * x;
                     auto v = wire_value + betas[i] * s_id + gammas[i];
                     num_chunk_product *= v;
-                    if (index == 1048576) {
-                        printf("i: %d, wi: %d, ", index, j);
-                        wire_value.print_hex("wire_value", GoldilocksField::colum_space);
-                        k_i.print_hex("k_i", GoldilocksField::colum_space);
-                        x.print_hex("x", GoldilocksField::newline);
-                        v.print_hex("v", GoldilocksField::newline);
-                    }
+//                    if (index == 1048576) {
+//                        printf("i: %d, wi: %d, ", index, j);
+//                        wire_value.print_hex("wire_value", GoldilocksField::colum_space);
+//                        k_i.print_hex("k_i", GoldilocksField::colum_space);
+//                        x.print_hex("x", GoldilocksField::newline);
+//                        v.print_hex("v", GoldilocksField::newline);
+//                    }
                 }
                 GoldilocksField den_chunk_product = GoldilocksField::from_canonical_u64(1);
                 for (int j = k*max_degree; j < (k+1)*max_degree; ++j) {
@@ -819,17 +819,17 @@ void compute_quotient_values_kernel(
 
                 vanishing_partial_products_terms[i * partial_product_rounds + k] = (prev_acc * num_chunk_product - next_acc * den_chunk_product);
 
-                if (index == 1048576) {
-                    printf("i: %d, partial_product_checks: ", index);
-                    GoldilocksFieldView{vanishing_partial_products_terms, vanishing_partial_products_terms_len}.print_hex();
-                }
+//                if (index == 1048576) {
+//                    printf("i: %d, partial_product_checks: ", index);
+//                    GoldilocksFieldView{vanishing_partial_products_terms, vanishing_partial_products_terms_len}.print_hex();
+//                }
 
             }
         }
-        if (index == 1048576) {
-            printf("i: %d, term: ", index);
-            GoldilocksFieldView{vanishing_partial_products_terms, vanishing_partial_products_terms_len}.print_hex();
-        }
+//        if (index == 1048576) {
+//            printf("i: %d, term: ", index);
+//            GoldilocksFieldView{vanishing_partial_products_terms, vanishing_partial_products_terms_len}.print_hex();
+//        }
         for (int i = vanishing_partial_products_terms_len-1; i >= 0; --i) {
             reduce_with_powers(vanishing_partial_products_terms[i]);
         }
@@ -865,10 +865,10 @@ void compute_quotient_values_kernel(
             res[i] *= denominator_inv;
         }
 
-        if (index == 1048576) {
-            printf("i: %d, res: ", index);
-            GoldilocksFieldView{res, num_challenges}.print_hex();
-        }
+//        if (index == 1048576) {
+//            printf("i: %d, res: ", index);
+//            GoldilocksFieldView{res, num_challenges}.print_hex();
+//        }
 
         outs[index*2]   = res[0];
         outs[index*2+1] = res[1];

@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <fstream>
+#include <memory>
 #undef CUDA_ASSERT
 
 #define CUDA_ASSERT(expr) \
@@ -327,9 +328,10 @@ int main()
 
     uint8_t *start_p = (uint8_t*)d_ext_values_flatten;
     uint8_t *end_p   = (uint8_t*)(d_ext_values_flatten+values_num_per_extpoly*ext_poly_num);
-//    {
-//        std::vector<GoldilocksField> data;
-//        uint8_t *old_p;
+
+    //    {
+    //        std::vector<GoldilocksField> data;
+    //        uint8_t *old_p;
 //        DataSlice<std::remove_reference<decltype(data[0])>::type>{(decltype(&data[0])) old_p, (int)data.size()};
 //    }
 //    std::remove_reference<decltype(data2[0])>::type asdf;
@@ -340,7 +342,8 @@ int main()
             uint8_t *old_p = start_p; \
             start_p += cpylen;\
             assert(start_p < end_p);                  \
-            DataSlice<std::remove_reference<decltype(data[0])>::type>{(decltype(&data[0])) old_p, (int)data.size()};
+            std::unique_ptr<DataSlice<std::remove_reference<decltype(data[0])>::type>>(                          \
+            new DataSlice<std::remove_reference<decltype(data[0])>::type>{(decltype(&data[0])) old_p, (int)data.size()});
 
 #define  read_fvec_to_dev(fname) \
     ({                             \
@@ -385,6 +388,8 @@ int main()
 
     cudaStreamSynchronize(stream);
     size_t total_dev_use = start_p-(uint8_t*)d_ext_values_flatten;
+    d_ext_values_flatten -= pad_extvalues_len;
+
     printf("total_dev_use: %fG\n", (double )total_dev_use/1024/1024/1024);
 
     int num_challenges = 2;
@@ -397,13 +402,13 @@ int main()
     int zs_partial_products_commitment_leaf_len = 20;
     int wires_commitment_leaf_len = 234;
 
-//    printf("%d, %d\n", constants_sigmas_commitment_leaves.len, values_num_per_extpoly*constants_sigmas_commitment_leaf_len);
-    assert(constants_sigmas_commitment_leaves.len    == values_num_per_extpoly*constants_sigmas_commitment_leaf_len);
-    assert(zs_partial_products_commitment_leaves.len == values_num_per_extpoly*zs_partial_products_commitment_leaf_len);
-    assert(points.len == values_num_per_extpoly);
-    assert(alphas.len == num_challenges);
-    assert(betas.len == num_challenges);
-    assert(gammas.len == num_challenges);
+//    printf("%d, %d\n", constants_sigmas_commitment_leaves->len, values_num_per_extpoly*constants_sigmas_commitment_leaf_len);
+    assert(constants_sigmas_commitment_leaves->len    == values_num_per_extpoly*constants_sigmas_commitment_leaf_len);
+    assert(zs_partial_products_commitment_leaves->len == values_num_per_extpoly*zs_partial_products_commitment_leaf_len);
+    assert(points->len == values_num_per_extpoly);
+    assert(alphas->len == num_challenges);
+    assert(betas->len == num_challenges);
+    assert(gammas->len == num_challenges);
 
     start = clock();
     thcnt = 20000;
@@ -415,13 +420,13 @@ int main()
     };;
     compute_quotient_values_kernel<<<(thcnt+nthreads-1)/nthreads, nthreads, 0, stream>>>(
             log_len, rate_bits,
-            points.ptr,
+            points->ptr,
             d_outs,
             public_inputs_hash,
 
-            constants_sigmas_commitment_leaves.ptr,     constants_sigmas_commitment_leaf_len,
-            zs_partial_products_commitment_leaves.ptr,  zs_partial_products_commitment_leaf_len,
-            d_ext_values_flatten - pad_extvalues_len,                wires_commitment_leaf_len,
+            constants_sigmas_commitment_leaves->ptr,     constants_sigmas_commitment_leaf_len,
+            zs_partial_products_commitment_leaves->ptr,  zs_partial_products_commitment_leaf_len,
+            d_ext_values_flatten,                wires_commitment_leaf_len,
             num_constants, num_routed_wires,
             num_challenges,
             num_gate_constraints,
@@ -429,13 +434,13 @@ int main()
             quotient_degree_factor,
             num_partial_products,
 
-            z_h_on_coset_evals.ptr,
-            z_h_on_coset_inverses.ptr,
+            z_h_on_coset_evals->ptr,
+            z_h_on_coset_inverses->ptr,
 
-            k_is.ptr,
-            alphas.ptr,
-            betas.ptr,
-            gammas.ptr
+            k_is->ptr,
+            alphas->ptr,
+            betas->ptr,
+            gammas->ptr
     );
     cudaStreamSynchronize(stream);
     printf("compute_quotient_values_kernel elapsed: %.2lf\n", (double )(clock()-start) / CLOCKS_PER_SEC * 1000);

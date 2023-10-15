@@ -44,6 +44,7 @@ pub struct CudaInnerContext {
 
 }
 
+
 #[repr(C)]
 // pub struct CudaInvContext<'a, F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
 pub struct CudaInvContext<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
@@ -63,8 +64,14 @@ pub struct CudaInvContext<F: RichField + Extendable<D>, C: GenericConfig<D, F = 
 
     pub root_table_device: DeviceBuffer::<F>,
     pub root_table_device2: DeviceBuffer::<F>,
+    pub constants_sigmas_commitment_leaves_device: DeviceBuffer::<F>,
     pub shift_powers_device: DeviceBuffer::<F>,
     pub shift_inv_powers_device: DeviceBuffer::<F>,
+
+    pub points_device: DeviceBuffer::<F>, 
+    pub z_h_on_coset_evals_device: DeviceBuffer::<F>, 
+    pub z_h_on_coset_inverses_device: DeviceBuffer::<F>, 
+    pub k_is_device: DeviceBuffer::<F>, 
 
     pub ctx: Context,
 }
@@ -261,7 +268,6 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         // );
 
         let salt_size = if blinding { SALT_SIZE } else { 0 };
-        println!("hello gpu");
 
         let lg_n = log2_strict(values_num_per_poly );
         let n_inv = F::inverse_2exp(lg_n);

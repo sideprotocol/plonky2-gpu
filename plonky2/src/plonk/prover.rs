@@ -1,8 +1,10 @@
 use alloc::vec::Vec;
 use alloc::{format, vec};
 use core::mem::swap;
+use std::ffi::c_void;
 use std::fs::File;
 use std::io::Write;
+use std::mem::transmute;
 use std::process::exit;
 use std::thread::sleep;
 use std::time;
@@ -14,7 +16,7 @@ use crate::field::extension::Extendable;
 use crate::field::polynomial::{PolynomialCoeffs, PolynomialValues};
 use crate::field::types::Field;
 use crate::field::zero_poly_coset::ZeroPolyOnCoset;
-use crate::fri::oracle::PolynomialBatch;
+use crate::fri::oracle::{CudaInnerContext, PolynomialBatch};
 use crate::hash::hash_types::RichField;
 use crate::iop::challenger::Challenger;
 use crate::iop::generator::generate_partial_witness;
@@ -30,7 +32,11 @@ use crate::util::partial_products::{partial_products_and_z_gx, quotient_chunk_pr
 use crate::util::timing::TimingTree;
 use crate::util::{ceil_div_usize, log2_ceil, transpose};
 use plonky2_cuda;
-
+use plonky2_cuda::DataSlice;
+use plonky2_util::log2_strict;
+use rustacuda::memory::DeviceSlice;
+use rustacuda::prelude::CopyDestination;
+use rustacuda::memory::AsyncCopyDestination;
 
 pub fn prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D: usize>(
     prover_data: &ProverOnlyCircuitData<F, C, D>,
@@ -383,21 +389,165 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
             alphas
         });
 
+    // let quotient_polys = timed!(
+    //     timing,
+    //     "compute quotient polys",
+    //     compute_quotient_polys(
+    //         common_data,
+    //         prover_data,
+    //         &public_inputs_hash,
+    //         &wires_commitment,
+    //         &partial_products_and_zs_commitment,
+    //         &betas,
+    //         &gammas,
+    //         &alphas,
+    //         timing,
+    //     )
+    // );
+
     let quotient_polys = timed!(
         timing,
         "compute quotient polys",
-        compute_quotient_polys(
-            common_data,
-            prover_data,
-            &public_inputs_hash,
-            &wires_commitment,
-            &partial_products_and_zs_commitment,
-            &betas,
-            &gammas,
-            &alphas,
-            timing,
-        )
-    );
+        {
+            let poly_num = common_data.config.num_wires;
+            let values_num_per_poly = degree;
+            let lg_n = log2_strict(values_num_per_poly );
+            let values_flatten_len = poly_num*values_num_per_poly;
+
+            let rate_bits = config.fri_config.rate_bits;
+            let blinding = config.zero_knowledge && PlonkOracle::WIRES.blinding;
+            let salt_size = if blinding { 4 } else { 0 };
+
+            let ext_values_flatten_len = (values_flatten_len+salt_size*values_num_per_poly) * (1<<rate_bits);
+            let pad_extvalues_len = ext_values_flatten_len;
+            let values_num_per_extpoly = values_num_per_poly*(1<<rate_bits);
+
+            let (front_msm, remained) = ctx.cache_mem_device.split_at_mut(values_flatten_len+pad_extvalues_len);
+            let (_, ext_values_device) = front_msm.split_at(values_flatten_len);
+            let root_table_device2 = &mut ctx.root_table_device2;
+            let shift_inv_powers_device = &mut ctx.shift_inv_powers_device;
+
+
+            let (partial_products_and_zs_commitment_leaves_device, alphas_device, betas_device, gammas_device,
+                d_outs, d_quotient_polys) = timed!(
+                timing,
+                "copy params",
+                {
+                    let mut useCnt = 0;
+                    let partial_products_and_zs_commitment_leaves = partial_products_and_zs_commitment.merkle_tree.leaves.concat();
+                    useCnt = partial_products_and_zs_commitment_leaves.len();
+                    let (data, remained) = remained.split_at_mut(useCnt);
+
+                    let partial_products_and_zs_commitment_leaves_device =
+                        DataSlice{ptr: data.as_ptr() as *const c_void, len: useCnt as i32 };
+                    unsafe {
+                        transmute::<&mut DeviceSlice<F>, &mut DeviceSlice<u64>>(data).async_copy_from(
+                            transmute::<&Vec<F>, &Vec<u64>>(&partial_products_and_zs_commitment_leaves),
+                            &ctx.inner.stream
+                        ).unwrap();
+                    }
+
+                    useCnt = values_num_per_extpoly*2;
+                    let (d_outs, remained) = remained.split_at_mut(useCnt);
+
+                    useCnt = values_num_per_extpoly*2;
+                    let (d_quotient_polys, remained) = remained.split_at_mut(useCnt);
+
+                    useCnt = num_challenges;
+                    let (d_alphas, remained) = remained.split_at_mut(useCnt);
+                    unsafe {
+                        transmute::<&mut DeviceSlice<F>, &mut DeviceSlice<u64>>(d_alphas).async_copy_from(
+                            transmute::<&Vec<F>, &Vec<u64>>(&alphas),
+                            &ctx.inner.stream
+                        ).unwrap();
+                    }
+                    let alphas_device = DataSlice{ptr: d_alphas.as_ptr() as *const c_void, len: alphas.len() as i32 };
+
+                    let (d_betas, remained) = remained.split_at_mut(useCnt);
+                    unsafe {
+                        transmute::<&mut DeviceSlice<F>, &mut DeviceSlice<u64>>(d_betas).async_copy_from(
+                            transmute::<&Vec<F>, &Vec<u64>>(&betas),
+                            &ctx.inner.stream
+                        ).unwrap();
+                    }
+                    let betas_device = DataSlice{ptr: d_betas.as_ptr() as *const c_void, len: betas.len() as i32 };
+
+                    let (d_gammas, remained) = remained.split_at_mut(useCnt);
+                    unsafe {
+                        transmute::<&mut DeviceSlice<F>, &mut DeviceSlice<u64>>(d_gammas).async_copy_from(
+                            transmute::<&Vec<F>, &Vec<u64>>(&gammas),
+                            &ctx.inner.stream
+                        ).unwrap();
+                    }
+                    let gammas_device = DataSlice{ptr: d_gammas.as_ptr() as *const c_void, len: gammas.len() as i32 };
+
+                    ctx.inner.stream.synchronize().unwrap();
+
+                    (partial_products_and_zs_commitment_leaves_device, alphas_device, betas_device, gammas_device, d_outs, d_quotient_polys)
+                }
+            );
+
+            let points_device = DataSlice{ptr: ctx.points_device.as_ptr() as *const c_void, len: ctx.points_device.len() as i32 };
+            let z_h_on_coset_evals_device = DataSlice{ptr: ctx.z_h_on_coset_evals_device.as_ptr() as *const c_void, len: ctx.z_h_on_coset_evals_device.len() as i32 };
+            let z_h_on_coset_inverses_device = DataSlice{ptr: ctx.z_h_on_coset_inverses_device.as_ptr() as *const c_void, len: ctx.z_h_on_coset_inverses_device.len() as i32 };
+            let k_is_device = DataSlice{ptr: ctx.k_is_device.as_ptr() as *const c_void, len: ctx.k_is_device.len() as i32 };
+
+            let constants_sigmas_commitment_leaves_device = DataSlice{
+                ptr: ctx.constants_sigmas_commitment_leaves_device.as_ptr() as *const c_void,
+                len: ctx.constants_sigmas_commitment_leaves_device.len() as i32,
+            };
+            let ctx_ptr :*mut CudaInnerContext = &mut ctx.inner;
+            timed!(
+                timing,
+                "compute quotient polys with GPU",
+                unsafe {
+                    plonky2_cuda::compute_quotient_polys(
+                        ext_values_device.as_ptr() as *const u64,
+
+                        poly_num as i32,
+                        values_num_per_poly as i32,
+                        lg_n as i32,
+                        root_table_device2.as_ptr() as *const u64,
+                        shift_inv_powers_device.as_ptr() as *const u64,
+                        rate_bits as i32,
+                        salt_size as i32,
+                        pad_extvalues_len as i32,
+
+                        &partial_products_and_zs_commitment_leaves_device,
+                        &constants_sigmas_commitment_leaves_device,
+
+                        d_outs.as_mut_ptr() as *mut c_void,
+                        d_quotient_polys.as_mut_ptr() as *mut c_void,
+
+                        &points_device,
+                        &z_h_on_coset_evals_device,
+                        &z_h_on_coset_inverses_device,
+                        &k_is_device,
+
+                        &alphas_device,
+                        &betas_device,
+                        &gammas_device,
+
+                        ctx_ptr as *mut core::ffi::c_void,
+                    )
+                }
+            );
+            let mut quotient_polys_flatten :Vec<F> = vec![F::ZERO; values_num_per_extpoly*2];
+            timed!(
+                    timing,
+                    "copy result",
+                    {
+                        unsafe {
+                            transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(d_quotient_polys).async_copy_to(
+                            transmute::<&mut Vec<F>, &mut Vec<u64>>(&mut quotient_polys_flatten),
+                            &ctx.inner.stream).unwrap();
+                            ctx.inner.stream.synchronize().unwrap();
+                        }
+                    }
+                );
+
+            quotient_polys_flatten.chunks(values_num_per_extpoly).map(|c|PolynomialCoeffs{coeffs: c.to_vec()}).collect::<Vec<_>>()
+        });
 
     // Compute the quotient polynomials, aka `t` in the Plonk paper.
     let all_quotient_poly_chunks :Vec<PolynomialCoeffs<F>> = timed!(
@@ -796,12 +946,12 @@ fn compute_quotient_polys<
     );
 
     println!("quotient_values len:{}, itemLen:{}", quotient_values.len(), quotient_values[0].len());
-    unsafe
-    {
-        let mut file = File::create("quotient_values.bin").unwrap();
-        let v = quotient_values.concat();
-        file.write_all(std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len()*8));
-    }
+    // unsafe
+    // {
+    //     let mut file = File::create("quotient_values.bin").unwrap();
+    //     let v = quotient_values.concat();
+    //     file.write_all(std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len()*8));
+    // }
 
     let values = timed!(
         timing,
@@ -817,12 +967,12 @@ fn compute_quotient_polys<
             .collect()
     );
 
-    unsafe
-    {
-        let mut file = File::create("quotient_values2.bin").unwrap();
-        let v = res.iter().flat_map(|f|f.coeffs.clone()).collect::<Vec<_>>();
-        file.write_all(std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len()*8));
-    }
+    // unsafe
+    // {
+    //     let mut file = File::create("quotient_values2.bin").unwrap();
+    //     let v = res.iter().flat_map(|f|f.coeffs.clone()).collect::<Vec<_>>();
+    //     file.write_all(std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len()*8));
+    // }
 
     // let n_inv = F::inverse_2exp(21);
     // println!("n_inv with 21: {:?}", n_inv);

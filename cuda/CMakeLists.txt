@@ -4,7 +4,7 @@ set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_ARCHITECTURES 75)
 
 set(SRC_LIST
-#        plonky2_gpu.cu
+        plonky2_gpu.cu
         test.cu
 #        plonky2_gpu.cu
 )

@@ -49,6 +49,12 @@ mod cuda {
     }
 }
 
+#[repr(C)]
+pub struct DataSlice {
+    pub ptr: *const c_void,
+    pub len: i32,
+}
+
 extern "C" {
     pub fn init();
 
@@ -76,6 +82,36 @@ extern "C" {
         salt_size: i32,
         cap_height: i32,
         pad_extvalues_len: i32,
+        ctx: *mut c_void,
+    ) -> cuda::Error;
+
+
+    pub fn compute_quotient_polys(
+        ext_values_flatten: *const u64,
+        poly_num: i32,
+        values_num_per_poly: i32,
+        log_len: i32,
+        root_table2: *const u64,
+        shift_inv_powers: *const u64,
+        rate_bits: i32,
+        salt_size: i32,
+        pad_extvalues_len: i32,
+
+        zs_partial_products_commitment_leaves: *const DataSlice,
+        constants_sigmas_commitment_leaves: *const DataSlice,
+        d_outs: *mut c_void,
+        d_quotient_polys: *mut c_void,
+
+
+        points: *const DataSlice,
+        z_h_on_coset_evals: *const DataSlice,
+        z_h_on_coset_inverses: *const DataSlice,
+
+        k_is: *const DataSlice,
+        alphas: *const DataSlice,
+        betas: *const DataSlice,
+        gammas: *const DataSlice,
+
         ctx: *mut c_void,
     ) -> cuda::Error;
 
