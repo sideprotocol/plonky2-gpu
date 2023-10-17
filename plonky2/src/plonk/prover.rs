@@ -219,6 +219,7 @@ pub fn prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D: us
             &mut challenger,
             &common_data.fri_params,
             timing,
+            &mut None,
         )
     );
 
@@ -361,23 +362,43 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
     //     file.write_all(std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len()*8));
     // }
 
+    let zs_partial_products = &zs_partial_products.iter().flat_map(|p|p.values.to_vec()).collect::<Vec<_>>();
     let partial_products_and_zs_commitment = timed!(
         timing,
         "commit to partial products and Z's",
-        PolynomialBatch::from_values(
-        // PolynomialBatch::from_values_with_gpu(
+        // PolynomialBatch::from_values(
+        PolynomialBatch::from_values_with_gpu(
             zs_partial_products,
-            // zs_partial_products.len()/degree,
-            // degree,
+            zs_partial_products.len()/degree,
+            degree,
             config.fri_config.rate_bits,
             config.zero_knowledge && PlonkOracle::ZS_PARTIAL_PRODUCTS.blinding,
             config.fri_config.cap_height,
             timing,
             prover_data.fft_root_table.as_ref(),
-            // &prover_data.fft_root_table_deg,
-            // ctx,
+            &prover_data.fft_root_table_deg,
+            ctx,
         )
     );
+
+
+    // let partial_products_and_zs_commitment = timed!(
+    //     timing,
+    //     "commit to partial products and Z's",
+    //     PolynomialBatch::from_values(
+    //     // PolynomialBatch::from_values_with_gpu(
+    //         zs_partial_products,
+    //         // zs_partial_products.len()/degree,
+    //         // degree,
+    //         config.fri_config.rate_bits,
+    //         config.zero_knowledge && PlonkOracle::ZS_PARTIAL_PRODUCTS.blinding,
+    //         config.fri_config.cap_height,
+    //         timing,
+    //         prover_data.fft_root_table.as_ref(),
+    //         // &prover_data.fft_root_table_deg,
+    //         // ctx,
+    //     )
+    // );
 
     let alphas = timed!(
         timing,
@@ -405,7 +426,7 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
     //     )
     // );
 
-    let quotient_polys = timed!(
+    let (quotient_polys, d_quotient_polys) = timed!(
         timing,
         "compute quotient polys",
         {
@@ -422,7 +443,7 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
             let pad_extvalues_len = ext_values_flatten_len;
             let values_num_per_extpoly = values_num_per_poly*(1<<rate_bits);
 
-            let (front_msm, remained) = ctx.cache_mem_device.split_at_mut(values_flatten_len+pad_extvalues_len);
+            let (front_msm, remained) = ctx.cache_mem_device.split_at_mut(ctx.second_stage_offset);
             let (_, ext_values_device) = front_msm.split_at(values_flatten_len);
             let root_table_device2 = &mut ctx.root_table_device2;
             let shift_inv_powers_device = &mut ctx.shift_inv_powers_device;
@@ -434,24 +455,38 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
                 "copy params",
                 {
                     let mut useCnt = 0;
-                    let partial_products_and_zs_commitment_leaves = partial_products_and_zs_commitment.merkle_tree.leaves.concat();
-                    useCnt = partial_products_and_zs_commitment_leaves.len();
+                    // let partial_products_and_zs_commitment_leaves = if partial_products_and_zs_commitment.merkle_tree.my_leaves.is_empty() {
+                    //     partial_products_and_zs_commitment.merkle_tree.leaves.concat()
+                    // } else {
+                    //     partial_products_and_zs_commitment.merkle_tree.my_leaves.to_vec()
+                    // };
+                    // // unsafe
+                    // // {
+                    // //     let mut file = File::create("partial_products_and_zs_commitment_leaves.bin").unwrap();
+                    // //     file.write_all(std::slice::from_raw_parts(partial_products_and_zs_commitment_leaves.as_ptr() as *const u8, partial_products_and_zs_commitment_leaves.len()*8));
+                    // // }
+                    //
+                    // useCnt = partial_products_and_zs_commitment_leaves.len();
+
+                    let (_, remained) = remained.split_at_mut(ctx.values_flatten2.len());
+
+                    useCnt = zs_partial_products.len() << rate_bits;
                     let (data, remained) = remained.split_at_mut(useCnt);
 
                     let partial_products_and_zs_commitment_leaves_device =
                         DataSlice{ptr: data.as_ptr() as *const c_void, len: useCnt as i32 };
-                    unsafe {
-                        transmute::<&mut DeviceSlice<F>, &mut DeviceSlice<u64>>(data).async_copy_from(
-                            transmute::<&Vec<F>, &Vec<u64>>(&partial_products_and_zs_commitment_leaves),
-                            &ctx.inner.stream
-                        ).unwrap();
-                    }
-
-                    useCnt = values_num_per_extpoly*2;
-                    let (d_outs, remained) = remained.split_at_mut(useCnt);
+                    // unsafe {
+                    //     transmute::<&mut DeviceSlice<F>, &mut DeviceSlice<u64>>(data).async_copy_from(
+                    //         transmute::<&Vec<F>, &Vec<u64>>(&partial_products_and_zs_commitment_leaves),
+                    //         &ctx.inner.stream
+                    //     ).unwrap();
+                    // }
 
                     useCnt = values_num_per_extpoly*2;
                     let (d_quotient_polys, remained) = remained.split_at_mut(useCnt);
+
+                    useCnt = values_num_per_extpoly*2;
+                    let (d_outs, remained) = remained.split_at_mut(useCnt);
 
                     useCnt = num_challenges;
                     let (d_alphas, remained) = remained.split_at_mut(useCnt);
@@ -511,7 +546,6 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
                         shift_inv_powers_device.as_ptr() as *const u64,
                         rate_bits as i32,
                         salt_size as i32,
-                        pad_extvalues_len as i32,
 
                         &partial_products_and_zs_commitment_leaves_device,
                         &constants_sigmas_commitment_leaves_device,
@@ -546,7 +580,7 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
                     }
                 );
 
-            quotient_polys_flatten.chunks(values_num_per_extpoly).map(|c|PolynomialCoeffs{coeffs: c.to_vec()}).collect::<Vec<_>>()
+            (quotient_polys_flatten.chunks(values_num_per_extpoly).map(|c|PolynomialCoeffs{coeffs: c.to_vec()}).collect::<Vec<_>>(), d_quotient_polys)
         });
 
     // Compute the quotient polynomials, aka `t` in the Plonk paper.
@@ -565,17 +599,35 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
             .collect()
     );
 
+    assert!(quotient_degree == (degree << config.fri_config.rate_bits));
     println!("all_quotient_poly_chunks len:{}, itemLen:{}", all_quotient_poly_chunks.len(), all_quotient_poly_chunks[0].coeffs.len());
+    // let quotient_polys_commitment = timed!(
+    //     timing,
+    //     "commit to quotient polys",
+    //     PolynomialBatch::from_coeffs(
+    //         all_quotient_poly_chunks,
+    //         config.fri_config.rate_bits,
+    //         config.zero_knowledge && PlonkOracle::QUOTIENT.blinding,
+    //         config.fri_config.cap_height,
+    //         timing,
+    //         prover_data.fft_root_table.as_ref(),
+    //     )
+    // );
+
+    println!("offset: {}, values: {}, zs product: {}",
+             ctx.second_stage_offset, ctx.values_flatten2.len(), zs_partial_products.len()<<config.fri_config.rate_bits);
     let quotient_polys_commitment = timed!(
         timing,
         "commit to quotient polys",
-        PolynomialBatch::from_coeffs(
-            all_quotient_poly_chunks,
+        PolynomialBatch::from_coeffs_with_gpu(
+            ctx.second_stage_offset+ctx.values_flatten2.len() + (zs_partial_products.len()<<config.fri_config.rate_bits),
+            degree,
+            num_challenges*(1 << config.fri_config.rate_bits),
             config.fri_config.rate_bits,
             config.zero_knowledge && PlonkOracle::QUOTIENT.blinding,
             config.fri_config.cap_height,
             timing,
-            prover_data.fft_root_table.as_ref(),
+            ctx,
         )
     );
 
@@ -630,6 +682,7 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
             &mut challenger,
             &common_data.fri_params,
             timing,
+            &mut Some(ctx),
         )
     );
 

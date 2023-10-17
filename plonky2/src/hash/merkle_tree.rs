@@ -5,6 +5,8 @@ use std::sync::Arc;
 use itertools::Itertools;
 
 use maybe_rayon::*;
+use plonky2_cuda::DataSlice;
+use rustacuda::memory::DeviceSlice;
 use serde::{Deserialize, Serialize};
 
 use crate::hash::hash_types::RichField;
@@ -56,6 +58,8 @@ pub struct MerkleTree<F: RichField, H: Hasher<F>> {
 
     pub my_leaf_len: usize,
     pub my_leaves: Arc<Vec<F>>,
+    pub my_leaves_len: usize,
+    pub my_leaves_dev_offset: usize,
     pub my_digests: Arc<Vec<H::Hash>>,
 }
 
@@ -308,6 +312,8 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
             cap: MerkleCap(cap),
             my_leaf_len: 0,
             my_leaves: Arc::new(vec![]),
+            my_leaves_len: 0,
+            my_leaves_dev_offset: 0,
             my_digests: Arc::new(vec![]),
         }
     }
@@ -368,6 +374,8 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
             cap: MerkleCap(cap),
             my_leaf_len: 0,
             my_leaves: Arc::new(vec![]),
+            my_leaves_len: 0,
+            my_leaves_dev_offset: 0,
             my_digests: Arc::new(vec![]),
         }
     }
@@ -385,10 +393,10 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
         let cap_height = log2_strict(self.cap.len());
 
         let num_layers = {
-            if self.my_leaves.is_empty() {
+            if self.my_leaves_len == 0 {
                 log2_strict(self.leaves.len()) - cap_height
             } else {
-                log2_strict(self.my_leaves.len()/self.my_leaf_len) - cap_height
+                log2_strict(self.my_leaves_len/self.my_leaf_len) - cap_height
             }
 
         };

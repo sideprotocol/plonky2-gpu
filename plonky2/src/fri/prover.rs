@@ -1,6 +1,9 @@
 use alloc::vec::Vec;
+use std::intrinsics::transmute;
+use itertools::Itertools;
 
 use maybe_rayon::*;
+use rustacuda::memory::{AsyncCopyDestination, DeviceSlice};
 
 use crate::field::extension::{flatten, unflatten, Extendable};
 use crate::field::polynomial::{PolynomialCoeffs, PolynomialValues};
@@ -8,6 +11,7 @@ use crate::fri::proof::{FriInitialTreeProof, FriProof, FriQueryRound, FriQuerySt
 use crate::fri::{FriConfig, FriParams};
 use crate::hash::hash_types::RichField;
 use crate::hash::hashing::{PlonkyPermutation, SPONGE_RATE};
+use crate::hash::merkle_proofs::MerkleProof;
 use crate::hash::merkle_tree::MerkleTree;
 use crate::iop::challenger::Challenger;
 use crate::plonk::config::{GenericConfig, Hasher};
@@ -26,6 +30,7 @@ pub fn fri_proof<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const
     challenger: &mut Challenger<F, C::Hasher>,
     fri_params: &FriParams,
     timing: &mut TimingTree,
+    ctx: &mut Option<&mut crate::fri::oracle::CudaInvContext<F, C, D>>,
 ) -> FriProof<F, C::Hasher, D> {
     let n = lde_polynomial_values.len();
     assert_eq!(lde_polynomial_coeffs.len(), n);
@@ -50,8 +55,11 @@ pub fn fri_proof<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const
     );
 
     // Query phase
-    let query_round_proofs =
-        fri_prover_query_rounds::<F, C, D>(initial_merkle_trees, &trees, challenger, n, fri_params);
+    let query_round_proofs = timed!(
+        timing,
+        "fri_prover_query_rounds",
+        fri_prover_query_rounds::<F, C, D>(initial_merkle_trees, &trees, challenger, n, fri_params, ctx)
+    );
 
     FriProof {
         commit_phase_merkle_caps: trees.iter().map(|t| t.cap.clone()).collect(),
@@ -172,13 +180,45 @@ fn fri_prover_query_rounds<
     challenger: &mut Challenger<F, C::Hasher>,
     n: usize,
     fri_params: &FriParams,
+    ctx: &mut Option<&mut crate::fri::oracle::CudaInvContext<F, C, D>>,
 ) -> Vec<FriQueryRound<F, C::Hasher, D>> {
-    challenger
-        .get_n_challenges(fri_params.config.num_query_rounds)
-        .into_par_iter()
+    let challs = challenger.get_n_challenges(fri_params.config.num_query_rounds);
+
+    let proofs_vec = challs.iter()
         .map(|rand| {
             let x_index = rand.to_canonical_u64() as usize % n;
-            fri_prover_query_round::<F, C, D>(initial_merkle_trees, trees, x_index, fri_params)
+
+            let initial_proof = initial_merkle_trees
+                .iter()
+                .map(|t| {
+                    if t.my_leaves_dev_offset > 0 && ctx.is_some(){
+                        let ctx = ctx.as_mut().unwrap();
+                        let data = &mut (*ctx).cache_mem_device[t.my_leaves_dev_offset..];
+                        let data = &mut data[x_index * t.my_leaf_len.. (x_index+1) * t.my_leaf_len];
+
+                        let mut values = Vec::<F>::with_capacity(t.my_leaf_len);
+                        unsafe {
+                            values.set_len(data.len());
+                            transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(data).async_copy_to(
+                                transmute::<&mut Vec<F>, &mut Vec<u64>>(&mut values),
+                                &ctx.inner.stream).unwrap();
+                            ctx.inner.stream.synchronize().unwrap();
+                        }
+                        ctx.inner.stream.synchronize().unwrap();
+                        (values, t.prove(x_index))
+                    } else {
+                        (t.get(x_index).to_vec(), t.prove(x_index))
+                    }
+                })
+                .collect::<Vec<_>>();
+            initial_proof
+        })
+        .collect_vec();
+
+    challs.into_par_iter().zip(proofs_vec)
+        .map(|(rand, initial_proof)| {
+            let x_index = rand.to_canonical_u64() as usize % n;
+            fri_prover_query_round::<F, C, D>(initial_proof, trees, x_index, fri_params)
         })
         .collect()
 }
@@ -188,16 +228,17 @@ fn fri_prover_query_round<
     C: GenericConfig<D, F = F>,
     const D: usize,
 >(
-    initial_merkle_trees: &[&MerkleTree<F, C::Hasher>],
+    // initial_merkle_trees: &[&MerkleTree<F, C::Hasher>],
+    initial_proof: Vec<(Vec<F>, MerkleProof<F, <C as GenericConfig<{ D }>>::Hasher>)>,
     trees: &[MerkleTree<F, C::Hasher>],
     mut x_index: usize,
     fri_params: &FriParams,
 ) -> FriQueryRound<F, C::Hasher, D> {
     let mut query_steps = Vec::new();
-    let initial_proof = initial_merkle_trees
-        .iter()
-        .map(|t| (t.get(x_index).to_vec(), t.prove(x_index)))
-        .collect::<Vec<_>>();
+    // let initial_proof = initial_merkle_trees
+    //     .iter()
+    //     .map(|t| (t.get(x_index).to_vec(), t.prove(x_index)))
+    //     .collect::<Vec<_>>();
     for (i, tree) in trees.iter().enumerate() {
         let arity_bits = fri_params.reduction_arity_bits[i];
         let evals = unflatten(tree.get(x_index >> arity_bits));

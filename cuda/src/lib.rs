@@ -68,6 +68,18 @@ extern "C" {
         ctx: *mut c_void,
     ) -> cuda::Error;
 
+    pub fn build_merkle_tree(
+        ext_values_flatten: *mut u64,
+        poly_num: i32,
+        values_num_per_poly: i32,
+        log_len: i32,
+        rate_bits: i32,
+        salt_size: i32,
+        cap_height: i32,
+        pad_extvalues_len: i32,
+        ctx: *mut c_void,
+    ) -> cuda::Error;
+
     pub fn merkle_tree_from_values(
         values_flatten: *mut u64,
         ext_values_flatten: *mut u64,
@@ -85,6 +97,22 @@ extern "C" {
         ctx: *mut c_void,
     ) -> cuda::Error;
 
+    pub fn merkle_tree_from_coeffs(
+        values_flatten: *mut u64,
+        ext_values_flatten: *mut u64,
+        poly_num: i32,
+        values_num_per_poly: i32,
+        log_len: i32,
+        root_table: *const u64,
+        root_table2: *const u64,
+        shift_powers: *const u64,
+        rate_bits: i32,
+        salt_size: i32,
+        cap_height: i32,
+        pad_extvalues_len: i32,
+        ctx: *mut c_void,
+    ) -> cuda::Error;
+
 
     pub fn compute_quotient_polys(
         ext_values_flatten: *const u64,
@@ -95,7 +123,6 @@ extern "C" {
         shift_inv_powers: *const u64,
         rate_bits: i32,
         salt_size: i32,
-        pad_extvalues_len: i32,
 
         zs_partial_products_commitment_leaves: *const DataSlice,
         constants_sigmas_commitment_leaves: *const DataSlice,

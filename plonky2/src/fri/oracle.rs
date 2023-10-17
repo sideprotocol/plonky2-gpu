@@ -58,9 +58,14 @@ pub struct CudaInvContext<F: RichField + Extendable<D>, C: GenericConfig<D, F = 
     pub values_flatten2     :Arc<Vec<F>>,
     pub digests_and_caps_buf2 :Arc<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>,
 
+    pub ext_values_flatten3 :Arc<Vec<F>>,
+    pub values_flatten3     :Arc<Vec<F>>,
+    pub digests_and_caps_buf3 :Arc<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>,
+
     // pub values_device: DeviceBuffer::<F>,
     // pub ext_values_device: DeviceBuffer::<F>,
     pub cache_mem_device: DeviceBuffer::<F>,
+    pub second_stage_offset: usize,
 
     pub root_table_device: DeviceBuffer::<F>,
     pub root_table_device2: DeviceBuffer::<F>,
@@ -286,12 +291,16 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
 
         let (ext_values_flatten, values_flatten, digests_and_caps_buf);
 
+        let isFirstStage;
+        let ext_values_device_offset;
         if values_num_per_poly*poly_num == ctx.values_flatten.len() {
             println!("in first stage");
             ext_values_flatten = Arc::<Vec<F>>::get_mut(&mut ctx.ext_values_flatten).unwrap();
             values_flatten = Arc::<Vec<F>>::get_mut(&mut ctx.values_flatten).unwrap();
             digests_and_caps_buf
                 = Arc::<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>::get_mut(&mut ctx.digests_and_caps_buf).unwrap();
+            ext_values_device_offset = 0;
+            isFirstStage = true;
         } else {
         // } else if values_num_per_poly*poly_num == ctx.values_flatten2.len() {
             println!("in second stage");
@@ -299,19 +308,22 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             values_flatten     = Arc::<Vec<F>>::get_mut(&mut ctx.values_flatten2).unwrap();
             digests_and_caps_buf
                 =  Arc::<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>::get_mut(&mut ctx.digests_and_caps_buf2).unwrap();
+            ext_values_device_offset = ctx.second_stage_offset;
+            isFirstStage = false;
         }
 
-        let (values_device, ext_values_device) = ctx.cache_mem_device.split_at_mut(values_flatten_len);
+        let (values_device, ext_values_device) =
+            ctx.cache_mem_device.split_at_mut(ext_values_device_offset).1.split_at_mut(values_flatten_len);
         // let values_device = &mut ctx.cache_mem_device[0..values_flatten_len];
         // let ext_values_device = &mut ctx.cache_mem_device[values_flatten_len..];
-        let root_table_device = &mut ctx.root_table_device;
-        let root_table_device2 = &mut ctx.root_table_device2;
-        let shift_powers_device = &mut ctx.shift_powers_device;
+        let root_table_device = & ctx.root_table_device;
+        let root_table_device2 = & ctx.root_table_device2;
+        let shift_powers_device = & ctx.shift_powers_device;
 
         unsafe {
-            transmute::<&mut DeviceSlice<F>, &mut DeviceSlice<u64>>(values_device).copy_from(
+            transmute::<&mut DeviceSlice<F>, &mut DeviceSlice<u64>>(values_device).async_copy_from(
                 transmute::<&Vec<F>, &Vec<u64>>(values),
-                // &ctx.inner.stream
+                &ctx.inner.stream
             ).unwrap();
             ctx.inner.stream.synchronize().unwrap();
         }
@@ -355,13 +367,16 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
 
                 let mut alllen = ext_values_flatten_len;
                 assert!(ext_values_flatten.len() == ext_values_flatten_len);
-                unsafe {
-                    transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&ext_values_device[0..alllen]).async_copy_to(
-                    transmute::<&mut Vec<F>, &mut Vec<u64>>(ext_values_flatten),
-                    &ctx.inner.stream).unwrap();
-                    ctx.inner.stream.synchronize().unwrap();
-                }
 
+                // if isFirstStage
+                // {
+                //     unsafe {
+                //         transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&ext_values_device[0..alllen]).async_copy_to(
+                //         transmute::<&mut Vec<F>, &mut Vec<u64>>(ext_values_flatten),
+                //         &ctx.inner.stream).unwrap();
+                //         ctx.inner.stream.synchronize().unwrap();
+                //     }
+                // }
 
                 alllen += pad_extvalues_len;
 
@@ -379,6 +394,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
 
                 unsafe {  fs.set_len(len_with_F / 4);}
             }
+
         );
 
         let coeffs = values_flatten.par_chunks(values_num_per_poly).map(|chunk|PolynomialCoeffs{coeffs: chunk.to_vec()}).collect::<Vec<_>>();
@@ -403,7 +419,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             // );
 
             let (ctx_ext_values_flatten, ctx_digests_and_caps_buf);
-            if values_num_per_poly*poly_num == ctx.values_flatten.len() {
+            if isFirstStage {
                 ctx_ext_values_flatten = ctx.ext_values_flatten.clone();
                 ctx_digests_and_caps_buf = ctx.digests_and_caps_buf.clone();
             } else {
@@ -412,6 +428,11 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 ctx_digests_and_caps_buf =  ctx.digests_and_caps_buf2.clone();
             }
 
+            let mut my_leaves_dev_offset= 0;
+            // if !isFirstStage {
+                my_leaves_dev_offset = ext_values_device_offset + values_flatten_len;
+            // }
+            let ctx_ext_values_flatten_len = ctx_ext_values_flatten.len();
             let merkle_tree = MerkleTree {
                 leaves: vec![],
                 // leaves,
@@ -419,8 +440,9 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 digests: vec![],
                 cap: MerkleCap(ctx_digests_and_caps_buf[num_digests..num_digests_and_caps].to_vec()),
                 my_leaf_len: poly_num+salt_size,
-                // my_leaves: Arc::new(vec![]),
                 my_leaves: ctx_ext_values_flatten,
+                my_leaves_len: ctx_ext_values_flatten_len,
+                my_leaves_dev_offset,
                 my_digests: ctx_digests_and_caps_buf,
 
             };
@@ -448,6 +470,163 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             //         .join(", ");
             //     println!("cap idx: {}, hash: {}", idx, result);
             // }
+
+            Self {
+                polynomials,
+                merkle_tree,
+                degree_log: lg_n,
+                rate_bits,
+                blinding,
+                my_polynomials: vec![],
+            }
+        }
+    }
+
+    pub fn from_coeffs_with_gpu(
+        quotient_polys_offset: usize,
+        values_num_per_poly: usize,
+        poly_num: usize,
+        rate_bits: usize,
+        blinding: bool,
+        cap_height: usize,
+        timing: &mut TimingTree,
+        ctx: &mut CudaInvContext<F, C, D>,
+    ) -> Self
+    {
+        // let poly_num: usize = values.len();
+        // let values_num_per_poly  = values[0].values.len();
+
+        // let values_flatten = values;
+        // let mut values_flatten = timed!(
+        //     timing,
+        //     "flat map",
+        //     values.into_par_iter().flat_map(|poly| poly.values).collect::<Vec<F>>()
+        // );
+
+        let salt_size = if blinding { SALT_SIZE } else { 0 };
+
+        let lg_n = log2_strict(values_num_per_poly );
+        let n_inv = F::inverse_2exp(lg_n);
+        let n_inv_ptr  : *const F = &n_inv;
+
+        let len_cap = (1 << cap_height);
+        let num_digests = 2 * (values_num_per_poly*(1<<rate_bits) - len_cap);
+        let num_digests_and_caps = num_digests + len_cap;
+
+        let values_flatten_len = poly_num*values_num_per_poly;
+        let ext_values_flatten_len = (values_flatten_len+salt_size*values_num_per_poly) * (1<<rate_bits);
+        let digests_and_caps_buf_len = num_digests_and_caps;
+
+        let pad_extvalues_len = ext_values_flatten_len;
+
+        let values_flatten     = Arc::<Vec<F>>::get_mut(&mut ctx.values_flatten3).unwrap();
+        let ext_values_flatten = Arc::<Vec<F>>::get_mut(&mut ctx.ext_values_flatten3).unwrap();
+        let digests_and_caps_buf
+            = Arc::<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>::get_mut(&mut ctx.digests_and_caps_buf3).unwrap();
+
+        println!("hello asdf, cache: {}, quotient offset: {}, values: {}", ctx.cache_mem_device.len(), quotient_polys_offset, values_flatten_len);
+        let (values_device, ext_values_device) =
+            ctx.cache_mem_device.split_at_mut(quotient_polys_offset).1.split_at_mut(values_flatten_len);
+        println!("bye   asdf");
+
+        // let values_device = &mut ctx.cache_mem_device[0..values_flatten_len];
+        // let ext_values_device = &mut ctx.cache_mem_device[values_flatten_len..];
+        let root_table_device = & ctx.root_table_device;
+        let root_table_device2 = & ctx.root_table_device2;
+        let shift_powers_device = & ctx.shift_powers_device;
+
+        unsafe {
+            let ctx_ptr :*mut CudaInnerContext = &mut ctx.inner;
+            timed!(
+                timing,
+                "FFT + build Merkle tree + transpose with gpu",
+                {
+                    plonky2_cuda::merkle_tree_from_coeffs(
+                        values_device.as_mut_ptr() as *mut u64,
+                        ext_values_device.as_mut_ptr() as *mut u64,
+                        poly_num as i32, values_num_per_poly as i32,
+                        lg_n as i32,
+                        root_table_device.as_ptr() as *const u64,
+                        root_table_device2.as_ptr() as *const u64,
+                        shift_powers_device.as_ptr() as *const u64,
+                        rate_bits as i32,
+                        salt_size as i32,
+                        cap_height as i32,
+                        pad_extvalues_len as i32,
+                        ctx_ptr as *mut core::ffi::c_void,
+                    );
+                }
+            );
+        }
+        timed!(
+            timing,
+            "copy result",
+            {
+                let alllen = values_flatten_len;
+
+                unsafe {
+                    transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(values_device).async_copy_to(
+                    transmute::<&mut Vec<F>, &mut Vec<u64>>(values_flatten),
+                    &ctx.inner.stream).unwrap();
+                    ctx.inner.stream.synchronize().unwrap();
+                }
+
+                let mut alllen = ext_values_flatten_len;
+                assert!(ext_values_flatten.len() == ext_values_flatten_len);
+
+                // if isFirstStage
+                // {
+                //     unsafe {
+                //         transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&ext_values_device[0..alllen]).async_copy_to(
+                //         transmute::<&mut Vec<F>, &mut Vec<u64>>(ext_values_flatten),
+                //         &ctx.inner.stream).unwrap();
+                //         ctx.inner.stream.synchronize().unwrap();
+                //     }
+                // }
+
+                alllen += pad_extvalues_len;
+
+                let len_with_F = digests_and_caps_buf_len*4;
+                let fs= unsafe { mem::transmute::<&mut Vec<_>, &mut Vec<F>>(digests_and_caps_buf) };
+
+                unsafe {  fs.set_len(len_with_F);}
+                println!("alllen: {}, digest_and_cap_buf_len: {}, diglen: {}", alllen, len_with_F, digests_and_caps_buf_len);
+                unsafe {
+                    transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&ext_values_device[alllen..alllen+len_with_F]).async_copy_to(
+                    transmute::<&mut Vec<F>, &mut Vec<u64>>(fs),
+                    &ctx.inner.stream).unwrap();
+                    ctx.inner.stream.synchronize().unwrap();
+                }
+
+                unsafe {  fs.set_len(len_with_F / 4);}
+            }
+
+        );
+
+        let coeffs = values_flatten.par_chunks(values_num_per_poly).map(|chunk|PolynomialCoeffs{coeffs: chunk.to_vec()}).collect::<Vec<_>>();
+
+        {
+            let polynomials = coeffs;
+            let ctx_ext_values_flatten = ctx.ext_values_flatten.clone();
+            // let ctx_ext_values_flatten :Arc<Vec<F>> = Arc::new(vec![]);
+            let ctx_digests_and_caps_buf = ctx.digests_and_caps_buf3.clone();
+
+            let mut my_leaves_dev_offset= quotient_polys_offset + values_flatten_len;
+
+            let ctx_ext_values_flatten_len = ext_values_flatten_len;
+            let merkle_tree = MerkleTree {
+                leaves: vec![],
+                // leaves,
+                // digests: digests_and_caps_buf[0..num_digests].to_vec(),
+                digests: vec![],
+                cap: MerkleCap(ctx_digests_and_caps_buf[num_digests..num_digests_and_caps].to_vec()),
+                my_leaf_len: poly_num+salt_size,
+                my_leaves: ctx_ext_values_flatten,
+                my_leaves_len: ctx_ext_values_flatten_len,
+                my_leaves_dev_offset,
+                my_digests: ctx_digests_and_caps_buf,
+
+            };
 
             Self {
                 polynomials,
@@ -670,6 +849,13 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         timing: &mut TimingTree,
         fft_root_table: Option<&FftRootTable<F>>,
     ) -> Self {
+        // unsafe
+        //     {
+        //         let v = polynomials.iter().flat_map(|p|p.coeffs.to_vec()).collect_vec();
+        //         let mut file = File::create("values_flatten-cpu.bin").unwrap();
+        //         file.write_all(std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len()*8));
+        //     }
+        //
         let degree = polynomials[0].len();
         let lde_values = timed!(
             timing,
@@ -677,13 +863,41 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             Self::lde_values(&polynomials, rate_bits, blinding, fft_root_table)
         );
 
+        // if polynomials.len() == 20 {
+        //     unsafe
+        //         {
+        //             let v = lde_values.concat();
+        //             let mut file = File::create("fft_kernel-cpu.bin").unwrap();
+        //             file.write_all(std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len()*8));
+        //         }
+        // }
+        //
         let mut leaves = timed!(timing, "transpose LDEs", transpose(&lde_values));
+        // if polynomials.len() == 20 {
+        //     unsafe
+        //         {
+        //             let v = leaves.concat();
+        //             let mut file = File::create("transpose-cpu.bin").unwrap();
+        //             file.write_all(std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len()*8));
+        //         }
+        // }
+
         timed!(timing, "reverse index bits", reverse_index_bits_in_place(&mut leaves));
+        // if polynomials.len() == 20 {
+        //     unsafe
+        //         {
+        //             let v = leaves.concat();
+        //             let mut file = File::create("partial_products-cpu.bin").unwrap();
+        //             file.write_all(std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len()*8));
+        //         }
+        // }
+
         let merkle_tree = timed!(
             timing,
             "build Merkle tree",
             MerkleTree::new(leaves, cap_height)
         );
+
 
         Self {
             polynomials,
@@ -769,6 +983,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
         challenger: &mut Challenger<F, C::Hasher>,
         fri_params: &FriParams,
         timing: &mut TimingTree,
+        ctx: &mut Option<&mut crate::fri::oracle::CudaInvContext<F, C, D>>,
     ) -> FriProof<F, C::Hasher, D> {
         assert!(D > 1, "Not implemented for D=1.");
         let alpha = challenger.get_extension_challenge::<D>();
@@ -823,6 +1038,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             challenger,
             fri_params,
             timing,
+            ctx,
         ));
 
         fri_proof
