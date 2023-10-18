@@ -191,7 +191,7 @@ fn fri_prover_query_rounds<
             let initial_proof = initial_merkle_trees
                 .iter()
                 .map(|t| {
-                    if t.my_leaves_dev_offset > 0 && ctx.is_some(){
+                    if t.my_leaves_dev_offset > 0 && ctx.is_some() {
                         let ctx = ctx.as_mut().unwrap();
                         let data = &mut (*ctx).cache_mem_device[t.my_leaves_dev_offset..];
                         let data = &mut data[x_index * t.my_leaf_len.. (x_index+1) * t.my_leaf_len];

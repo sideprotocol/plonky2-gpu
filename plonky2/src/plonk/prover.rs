@@ -426,7 +426,7 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
     //     )
     // );
 
-    let (quotient_polys, d_quotient_polys) = timed!(
+    timed!(
         timing,
         "compute quotient polys",
         {
@@ -566,41 +566,41 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
                     )
                 }
             );
-            let mut quotient_polys_flatten :Vec<F> = vec![F::ZERO; values_num_per_extpoly*2];
-            timed!(
-                    timing,
-                    "copy result",
-                    {
-                        unsafe {
-                            transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(d_quotient_polys).async_copy_to(
-                            transmute::<&mut Vec<F>, &mut Vec<u64>>(&mut quotient_polys_flatten),
-                            &ctx.inner.stream).unwrap();
-                            ctx.inner.stream.synchronize().unwrap();
-                        }
-                    }
-                );
-
-            (quotient_polys_flatten.chunks(values_num_per_extpoly).map(|c|PolynomialCoeffs{coeffs: c.to_vec()}).collect::<Vec<_>>(), d_quotient_polys)
+            // let mut quotient_polys_flatten :Vec<F> = vec![F::ZERO; values_num_per_extpoly*2];
+            // timed!(
+            //         timing,
+            //         "copy result",
+            //         {
+            //             unsafe {
+            //                 transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(d_quotient_polys).async_copy_to(
+            //                 transmute::<&mut Vec<F>, &mut Vec<u64>>(&mut quotient_polys_flatten),
+            //                 &ctx.inner.stream).unwrap();
+            //                 ctx.inner.stream.synchronize().unwrap();
+            //             }
+            //         }
+            //     );
+            //
+            // (quotient_polys_flatten.chunks(values_num_per_extpoly).map(|c|PolynomialCoeffs{coeffs: c.to_vec()}).collect::<Vec<_>>(), d_quotient_polys)
         });
 
-    // Compute the quotient polynomials, aka `t` in the Plonk paper.
-    let all_quotient_poly_chunks :Vec<PolynomialCoeffs<F>> = timed!(
-        timing,
-        "split up quotient polys",
-        quotient_polys
-            .into_par_iter()
-            .flat_map(|mut quotient_poly| {
-                quotient_poly.trim_to_len(quotient_degree).expect(
-                    "Quotient has failed, the vanishing polynomial is not divisible by Z_H",
-                );
-                // Split quotient into degree-n chunks.
-                quotient_poly.chunks(degree)
-            })
-            .collect()
-    );
+    // // Compute the quotient polynomials, aka `t` in the Plonk paper.
+    // let all_quotient_poly_chunks :Vec<PolynomialCoeffs<F>> = timed!(
+    //     timing,
+    //     "split up quotient polys",
+    //     quotient_polys
+    //         .into_par_iter()
+    //         .flat_map(|mut quotient_poly| {
+    //             quotient_poly.trim_to_len(quotient_degree).expect(
+    //                 "Quotient has failed, the vanishing polynomial is not divisible by Z_H",
+    //             );
+    //             // Split quotient into degree-n chunks.
+    //             quotient_poly.chunks(degree)
+    //         })
+    //         .collect()
+    // );
+    // println!("all_quotient_poly_chunks len:{}, itemLen:{}", all_quotient_poly_chunks.len(), all_quotient_poly_chunks[0].coeffs.len());
 
     assert!(quotient_degree == (degree << config.fri_config.rate_bits));
-    println!("all_quotient_poly_chunks len:{}, itemLen:{}", all_quotient_poly_chunks.len(), all_quotient_poly_chunks[0].coeffs.len());
     // let quotient_polys_commitment = timed!(
     //     timing,
     //     "commit to quotient polys",
