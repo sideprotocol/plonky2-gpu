@@ -725,7 +725,8 @@ void compute_quotient_values_kernel(
                     EvaluationVarsBasePacked vars = {
                             .local_constants = local_constants.view(num_selectors, local_constants.len),
                             .local_wires = local_wires,
-                            .public_inputs_hash = public_inputs_hash
+                            .public_inputs_hash = public_inputs_hash,
+                            .index = index
                     };
 
 //                    if (index == 1048576) {
@@ -845,13 +846,13 @@ void compute_quotient_values_kernel(
         };
 
         auto l_0_x = eval_l_0(index, x);
-        if (index == 1048576) {
-            l_0_x.print_hex("l_0_x", GoldilocksField::colum_space);
-            z_h_on_coset_evals[index%(1<<rate_bits)].print_hex("ev", GoldilocksField::colum_space);
-            auto den = (GoldilocksField::from_canonical_u64(1<<degree_log) * (x - GoldilocksField{1}));
-            den.print_hex("den", GoldilocksField::colum_space);
-            den.inverse().print_hex("denv", GoldilocksField::newline);
-        }
+//        if (index == 1048576) {
+//            l_0_x.print_hex("l_0_x", GoldilocksField::colum_space);
+//            z_h_on_coset_evals[index%(1<<rate_bits)].print_hex("ev", GoldilocksField::colum_space);
+//            auto den = (GoldilocksField::from_canonical_u64(1<<degree_log) * (x - GoldilocksField{1}));
+//            den.print_hex("den", GoldilocksField::colum_space);
+//            den.inverse().print_hex("denv", GoldilocksField::newline);
+//        }
 
         for (int i = num_challenges-1; i >= 0; --i) {
             auto z_x = local_zs[i];
@@ -864,7 +865,7 @@ void compute_quotient_values_kernel(
         for (int i = 0; i < num_challenges; ++i) {
             res[i] *= denominator_inv;
         }
-
+//
 //        if (index == 1048576) {
 //            printf("i: %d, res: ", index);
 //            GoldilocksFieldView{res, num_challenges}.print_hex();

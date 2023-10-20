@@ -443,8 +443,8 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
             let pad_extvalues_len = ext_values_flatten_len;
             let values_num_per_extpoly = values_num_per_poly*(1<<rate_bits);
 
-            let (front_msm, remained) = ctx.cache_mem_device.split_at_mut(ctx.second_stage_offset);
-            let (_, ext_values_device) = front_msm.split_at(values_flatten_len);
+            let (ext_values_device, remained) = ctx.cache_mem_device.split_at_mut(ctx.second_stage_offset);
+            // let (_, ext_values_device) = front_msm.split_at(values_flatten_len);
             let root_table_device2 = &mut ctx.root_table_device2;
             let shift_inv_powers_device = &mut ctx.shift_inv_powers_device;
 
@@ -468,7 +468,7 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
                     //
                     // useCnt = partial_products_and_zs_commitment_leaves.len();
 
-                    let (_, remained) = remained.split_at_mut(ctx.values_flatten2.len());
+                    // let (_, remained) = remained.split_at_mut(ctx.values_flatten2.len());
 
                     useCnt = zs_partial_products.len() << rate_bits;
                     let (data, remained) = remained.split_at_mut(useCnt);
@@ -620,7 +620,7 @@ pub fn my_prove<F: RichField + Extendable<D>, C: GenericConfig<D, F=F>, const D:
         timing,
         "commit to quotient polys",
         PolynomialBatch::from_coeffs_with_gpu(
-            ctx.second_stage_offset+ctx.values_flatten2.len() + (zs_partial_products.len()<<config.fri_config.rate_bits),
+            ctx.second_stage_offset+(zs_partial_products.len()<<config.fri_config.rate_bits),
             degree,
             num_challenges*(1 << config.fri_config.rate_bits),
             config.fri_config.rate_bits,

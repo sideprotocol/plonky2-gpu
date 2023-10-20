@@ -94,13 +94,15 @@ int main()
     cudaStream_t stream;
     cudaSetDevice(0);
     cudaDeviceReset();
-    cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+//    cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+    cudaStreamCreate(&stream);
+
 //    test<<<1, 1, 0, stream>>>();
 //    cudaStreamSynchronize(stream);
 //
 //    exit(0);
 
-    bool compute_zs_partial_products = true;
+    bool compute_zs_partial_products = false;
 
     int poly_num = 234;
     constexpr int values_num_per_poly = 262144, log_len = 18;
@@ -251,10 +253,12 @@ int main()
     cudaStreamSynchronize(stream);
     printf("fft_kernel elapsed: %.2lf\n", fft_kernel_use=(double )(clock()-start) / CLOCKS_PER_SEC * 1000);
 
-
+    start = clock();
     CUDA_ASSERT(cudaMemcpyAsync(&values_flatten[0], d_values_flatten,  values_num_per_poly*poly_num*sizeof(GoldilocksField),
                                 cudaMemcpyDeviceToHost, stream));
+    printf("async copy elapsed: %.2lf\n", (double )(clock()-start) / CLOCKS_PER_SEC * 1000);
     cudaStreamSynchronize(stream);
+    printf("after sync, async copy elapsed: %.2lf\n", (double )(clock()-start) / CLOCKS_PER_SEC * 1000);
 
     std::ofstream file("values_flatten-gpu.bin", std::ios::binary);
     if (file.is_open()) {
@@ -465,7 +469,7 @@ int main()
     PoseidonHasher::HashOut public_inputs_hash = {
             GoldilocksField{0x672c5e6c12ad3476}, GoldilocksField{0xca5c2e49acfad27e},
             GoldilocksField{0x296be18388d15f70}, GoldilocksField{0x66b42e146a70d96d}
-    };;
+    };
     compute_quotient_values_kernel<<<(thcnt+nthreads-1)/nthreads, nthreads, 0, stream>>>(
             log_len, rate_bits,
             points->ptr,
@@ -490,6 +494,9 @@ int main()
             betas->ptr,
             gammas->ptr
     );
+    if (auto code = cudaGetLastError(); code != cudaSuccess) {
+        printf("compute quotient error: %s\n", cudaGetErrorString(code));
+    }
     cudaStreamSynchronize(stream);
     printf("compute_quotient_values_kernel elapsed: %.2lf\n", (double )(clock()-start) / CLOCKS_PER_SEC * 1000);
 

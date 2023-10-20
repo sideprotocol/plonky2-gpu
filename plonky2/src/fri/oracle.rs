@@ -1,5 +1,6 @@
 use alloc::format;
 use alloc::vec::Vec;
+use std::alloc::{Allocator, AllocError, Layout};
 use std::cmp::{max, min};
 use std::ffi::c_void;
 use std::fs::File;
@@ -8,6 +9,7 @@ use std::mem;
 use std::mem::transmute;
 use std::ops::IndexMut;
 use std::process::exit;
+use std::ptr::NonNull;
 use std::sync::Arc;
 
 use itertools::Itertools;
@@ -44,6 +46,31 @@ pub struct CudaInnerContext {
 
 }
 
+pub struct MyAllocator {}
+
+unsafe impl Allocator for MyAllocator {
+
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        unsafe {
+            let raw_ptr = rustacuda::memory::cuda_malloc_locked::<u8>(layout.size()).unwrap();
+            let ptr = NonNull::new(raw_ptr).ok_or(AllocError)?;
+            Ok(NonNull::slice_from_raw_parts(ptr, layout.size()))
+        }
+    }
+
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        if layout.size() != 0 {
+            // SAFETY: `layout` is non-zero in size,
+            // other conditions must be upheld by the caller
+            unsafe {
+                // dealloc(ptr.as_ptr(), layout)
+                rustacuda::memory::cuda_free_locked(ptr.as_ptr()).unwrap();
+            }
+        }
+
+    }
+
+}
 
 #[repr(C)]
 // pub struct CudaInvContext<'a, F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
@@ -51,15 +78,15 @@ pub struct CudaInvContext<F: RichField + Extendable<D>, C: GenericConfig<D, F = 
 {
     pub inner: CudaInnerContext,
     pub ext_values_flatten :Arc<Vec<F>>,
-    pub values_flatten     :Arc<Vec<F>>,
+    pub values_flatten     :Arc<Vec<F, MyAllocator>>,
     pub digests_and_caps_buf :Arc<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>,
 
     pub ext_values_flatten2 :Arc<Vec<F>>,
-    pub values_flatten2     :Arc<Vec<F>>,
+    pub values_flatten2     :Arc<Vec<F, MyAllocator>>,
     pub digests_and_caps_buf2 :Arc<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>,
 
     pub ext_values_flatten3 :Arc<Vec<F>>,
-    pub values_flatten3     :Arc<Vec<F>>,
+    pub values_flatten3     :Arc<Vec<F, MyAllocator>>,
     pub digests_and_caps_buf3 :Arc<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>,
 
     // pub values_device: DeviceBuffer::<F>,
@@ -291,42 +318,72 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
 
         let (ext_values_flatten, values_flatten, digests_and_caps_buf);
 
-        let isFirstStage;
+        let is_first_stage;
         let ext_values_device_offset;
         if values_num_per_poly*poly_num == ctx.values_flatten.len() {
             println!("in first stage");
             ext_values_flatten = Arc::<Vec<F>>::get_mut(&mut ctx.ext_values_flatten).unwrap();
-            values_flatten = Arc::<Vec<F>>::get_mut(&mut ctx.values_flatten).unwrap();
+            values_flatten = Arc::<Vec<F, MyAllocator>>::get_mut(&mut ctx.values_flatten).unwrap();
             digests_and_caps_buf
                 = Arc::<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>::get_mut(&mut ctx.digests_and_caps_buf).unwrap();
             ext_values_device_offset = 0;
-            isFirstStage = true;
+            is_first_stage = true;
         } else {
         // } else if values_num_per_poly*poly_num == ctx.values_flatten2.len() {
             println!("in second stage");
             ext_values_flatten = Arc::<Vec<F>>::get_mut(&mut ctx.ext_values_flatten2).unwrap();
-            values_flatten     = Arc::<Vec<F>>::get_mut(&mut ctx.values_flatten2).unwrap();
+            values_flatten     = Arc::<Vec<F, MyAllocator>>::get_mut(&mut ctx.values_flatten2).unwrap();
             digests_and_caps_buf
                 =  Arc::<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>::get_mut(&mut ctx.digests_and_caps_buf2).unwrap();
             ext_values_device_offset = ctx.second_stage_offset;
-            isFirstStage = false;
+            is_first_stage = false;
         }
 
-        let (values_device, ext_values_device) =
-            ctx.cache_mem_device.split_at_mut(ext_values_device_offset).1.split_at_mut(values_flatten_len);
+        // let (values_device, ext_values_device) =
+        //     ctx.cache_mem_device.split_at_mut(ext_values_device_offset).1.split_at_mut(values_flatten_len);
+        let values_device =  ctx.cache_mem_device.split_at_mut(ext_values_device_offset).1;
+
         // let values_device = &mut ctx.cache_mem_device[0..values_flatten_len];
         // let ext_values_device = &mut ctx.cache_mem_device[values_flatten_len..];
         let root_table_device = & ctx.root_table_device;
         let root_table_device2 = & ctx.root_table_device2;
         let shift_powers_device = & ctx.shift_powers_device;
 
-        unsafe {
-            transmute::<&mut DeviceSlice<F>, &mut DeviceSlice<u64>>(values_device).async_copy_from(
-                transmute::<&Vec<F>, &Vec<u64>>(values),
-                &ctx.inner.stream
-            ).unwrap();
-            ctx.inner.stream.synchronize().unwrap();
-        }
+        timed!(
+            timing,
+            "copy values",
+            unsafe {
+                transmute::<&mut DeviceSlice<F>, &mut DeviceSlice<u64>>(&mut values_device[0..values_flatten_len]).async_copy_from(
+                    transmute::<&Vec<F>, &Vec<u64>>(values),
+                    &ctx.inner.stream
+                ).unwrap();
+                ctx.inner.stream.synchronize().unwrap();
+            }
+        );
+        // unsafe {
+        //     let ctx_ptr :*mut CudaInnerContext = &mut ctx.inner;
+        //     timed!(
+        //         timing,
+        //         "FFT + build Merkle tree + transpose with gpu",
+        //         {
+        //             plonky2_cuda::merkle_tree_from_values(
+        //                 values_device.as_mut_ptr() as *mut u64,
+        //                 ext_values_device.as_mut_ptr() as *mut u64,
+        //                 poly_num as i32, values_num_per_poly as i32,
+        //                 lg_n as i32,
+        //                 root_table_device.as_ptr() as *const u64,
+        //                 root_table_device2.as_ptr() as *const u64,
+        //                 shift_powers_device.as_ptr() as *const u64,
+        //                 n_inv_ptr as *const u64,
+        //                 rate_bits as i32,
+        //                 salt_size as i32,
+        //                 cap_height as i32,
+        //                 pad_extvalues_len as i32,
+        //                 ctx_ptr as *mut core::ffi::c_void,
+        //             );
+        //         }
+        //     );
+        // }
 
         unsafe {
             let ctx_ptr :*mut CudaInnerContext = &mut ctx.inner;
@@ -334,15 +391,29 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 timing,
                 "FFT + build Merkle tree + transpose with gpu",
                 {
-                    plonky2_cuda::merkle_tree_from_values(
+                    plonky2_cuda::ifft(
                         values_device.as_mut_ptr() as *mut u64,
-                        ext_values_device.as_mut_ptr() as *mut u64,
+                        poly_num as i32, values_num_per_poly as i32,
+                        lg_n as i32,
+                        root_table_device.as_ptr() as *const u64,
+                        n_inv_ptr as *const u64,
+                        ctx_ptr as *mut core::ffi::c_void,
+                    );
+
+                    unsafe {
+                        transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&values_device[0..values_flatten_len]).async_copy_to(
+                        transmute::<&mut Vec<F, MyAllocator>, &mut Vec<u64>>(values_flatten),
+                        &ctx.inner.stream2).unwrap();
+                    }
+
+                    plonky2_cuda::merkle_tree_from_coeffs(
+                        values_device.as_mut_ptr() as *mut u64,
+                        values_device.as_mut_ptr() as *mut u64,
                         poly_num as i32, values_num_per_poly as i32,
                         lg_n as i32,
                         root_table_device.as_ptr() as *const u64,
                         root_table_device2.as_ptr() as *const u64,
                         shift_powers_device.as_ptr() as *const u64,
-                        n_inv_ptr as *const u64,
                         rate_bits as i32,
                         salt_size as i32,
                         cap_height as i32,
@@ -356,22 +427,13 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             timing,
             "copy result",
             {
-                let alllen = values_flatten_len;
-
-                unsafe {
-                    transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(values_device).async_copy_to(
-                    transmute::<&mut Vec<F>, &mut Vec<u64>>(values_flatten),
-                    &ctx.inner.stream).unwrap();
-                    ctx.inner.stream.synchronize().unwrap();
-                }
-
                 let mut alllen = ext_values_flatten_len;
                 assert!(ext_values_flatten.len() == ext_values_flatten_len);
 
-                // if isFirstStage
+                // if is_first_stage
                 // {
                 //     unsafe {
-                //         transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&ext_values_device[0..alllen]).async_copy_to(
+                //         transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&values_device[0..alllen]).async_copy_to(
                 //         transmute::<&mut Vec<F>, &mut Vec<u64>>(ext_values_flatten),
                 //         &ctx.inner.stream).unwrap();
                 //         ctx.inner.stream.synchronize().unwrap();
@@ -386,7 +448,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 unsafe {  fs.set_len(len_with_F);}
                 println!("alllen: {}, digest_and_cap_buf_len: {}, diglen: {}", alllen, len_with_F, digests_and_caps_buf_len);
                 unsafe {
-                    transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&ext_values_device[alllen..alllen+len_with_F]).async_copy_to(
+                    transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&values_device[alllen..alllen+len_with_F]).async_copy_to(
                     transmute::<&mut Vec<F>, &mut Vec<u64>>(fs),
                     &ctx.inner.stream).unwrap();
                     ctx.inner.stream.synchronize().unwrap();
@@ -419,7 +481,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             // );
 
             let (ctx_ext_values_flatten, ctx_digests_and_caps_buf);
-            if isFirstStage {
+            if is_first_stage {
                 ctx_ext_values_flatten = ctx.ext_values_flatten.clone();
                 ctx_digests_and_caps_buf = ctx.digests_and_caps_buf.clone();
             } else {
@@ -429,8 +491,8 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             }
 
             let mut my_leaves_dev_offset= 0;
-            // if !isFirstStage {
-                my_leaves_dev_offset = ext_values_device_offset + values_flatten_len;
+            // if !is_first_stage {
+                my_leaves_dev_offset = ext_values_device_offset as isize;
             // }
             let ctx_ext_values_flatten_len = ctx_ext_values_flatten.len();
             let merkle_tree = MerkleTree {
@@ -519,14 +581,13 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
 
         let pad_extvalues_len = ext_values_flatten_len;
 
-        let values_flatten     = Arc::<Vec<F>>::get_mut(&mut ctx.values_flatten3).unwrap();
+        let values_flatten     = Arc::<Vec<F, MyAllocator>>::get_mut(&mut ctx.values_flatten3).unwrap();
         let ext_values_flatten = Arc::<Vec<F>>::get_mut(&mut ctx.ext_values_flatten3).unwrap();
         let digests_and_caps_buf
             = Arc::<Vec<<<C as GenericConfig<D>>::Hasher as Hasher<F>>::Hash>>::get_mut(&mut ctx.digests_and_caps_buf3).unwrap();
 
         println!("hello asdf, cache: {}, quotient offset: {}, values: {}", ctx.cache_mem_device.len(), quotient_polys_offset, values_flatten_len);
-        let (values_device, ext_values_device) =
-            ctx.cache_mem_device.split_at_mut(quotient_polys_offset).1.split_at_mut(values_flatten_len);
+        let values_device =  ctx.cache_mem_device.split_at_mut(quotient_polys_offset).1;
         println!("bye   asdf");
 
         // let values_device = &mut ctx.cache_mem_device[0..values_flatten_len];
@@ -541,9 +602,15 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 timing,
                 "FFT + build Merkle tree + transpose with gpu",
                 {
+                    unsafe {
+                        transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&values_device[0..values_flatten_len]).async_copy_to(
+                        transmute::<&mut Vec<F, MyAllocator>, &mut Vec<u64>>(values_flatten),
+                        &ctx.inner.stream2).unwrap();
+                    }
+
                     plonky2_cuda::merkle_tree_from_coeffs(
                         values_device.as_mut_ptr() as *mut u64,
-                        ext_values_device.as_mut_ptr() as *mut u64,
+                        values_device.as_mut_ptr() as *mut u64,
                         poly_num as i32, values_num_per_poly as i32,
                         lg_n as i32,
                         root_table_device.as_ptr() as *const u64,
@@ -562,14 +629,14 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             timing,
             "copy result",
             {
-                let alllen = values_flatten_len;
-
-                unsafe {
-                    transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(values_device).async_copy_to(
-                    transmute::<&mut Vec<F>, &mut Vec<u64>>(values_flatten),
-                    &ctx.inner.stream).unwrap();
-                    ctx.inner.stream.synchronize().unwrap();
-                }
+                // let alllen = values_flatten_len;
+                //
+                // unsafe {
+                //     transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&values_device[0..values_flatten_len]).async_copy_to(
+                //     transmute::<&mut Vec<F>, &mut Vec<u64>>(values_flatten),
+                //     &ctx.inner.stream).unwrap();
+                //     ctx.inner.stream.synchronize().unwrap();
+                // }
 
                 let mut alllen = ext_values_flatten_len;
                 assert!(ext_values_flatten.len() == ext_values_flatten_len);
@@ -577,7 +644,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 // if isFirstStage
                 // {
                 //     unsafe {
-                //         transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&ext_values_device[0..alllen]).async_copy_to(
+                //         transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&values_device[0..alllen]).async_copy_to(
                 //         transmute::<&mut Vec<F>, &mut Vec<u64>>(ext_values_flatten),
                 //         &ctx.inner.stream).unwrap();
                 //         ctx.inner.stream.synchronize().unwrap();
@@ -592,7 +659,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
                 unsafe {  fs.set_len(len_with_F);}
                 println!("alllen: {}, digest_and_cap_buf_len: {}, diglen: {}", alllen, len_with_F, digests_and_caps_buf_len);
                 unsafe {
-                    transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&ext_values_device[alllen..alllen+len_with_F]).async_copy_to(
+                    transmute::<&DeviceSlice<F>, &DeviceSlice<u64>>(&values_device[alllen..alllen+len_with_F]).async_copy_to(
                     transmute::<&mut Vec<F>, &mut Vec<u64>>(fs),
                     &ctx.inner.stream).unwrap();
                     ctx.inner.stream.synchronize().unwrap();
@@ -611,7 +678,7 @@ impl<F: RichField + Extendable<D>, C: GenericConfig<D, F = F>, const D: usize>
             // let ctx_ext_values_flatten :Arc<Vec<F>> = Arc::new(vec![]);
             let ctx_digests_and_caps_buf = ctx.digests_and_caps_buf3.clone();
 
-            let mut my_leaves_dev_offset= quotient_polys_offset + values_flatten_len;
+            let mut my_leaves_dev_offset= quotient_polys_offset as isize;
 
             let ctx_ext_values_flatten_len = ext_values_flatten_len;
             let merkle_tree = MerkleTree {

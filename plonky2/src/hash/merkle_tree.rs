@@ -59,7 +59,7 @@ pub struct MerkleTree<F: RichField, H: Hasher<F>> {
     pub my_leaf_len: usize,
     pub my_leaves: Arc<Vec<F>>,
     pub my_leaves_len: usize,
-    pub my_leaves_dev_offset: usize,
+    pub my_leaves_dev_offset: isize,
     pub my_digests: Arc<Vec<H::Hash>>,
 }
 
@@ -313,7 +313,7 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
             my_leaf_len: 0,
             my_leaves: Arc::new(vec![]),
             my_leaves_len: 0,
-            my_leaves_dev_offset: 0,
+            my_leaves_dev_offset: -1,
             my_digests: Arc::new(vec![]),
         }
     }
@@ -375,7 +375,7 @@ impl<F: RichField, H: Hasher<F>> MerkleTree<F, H> {
             my_leaf_len: 0,
             my_leaves: Arc::new(vec![]),
             my_leaves_len: 0,
-            my_leaves_dev_offset: 0,
+            my_leaves_dev_offset: -1,
             my_digests: Arc::new(vec![]),
         }
     }

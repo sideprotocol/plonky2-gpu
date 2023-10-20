@@ -225,6 +225,7 @@ extern "C" {
            int pad_extvalues_len,
            CudaInvContext* ctx
     ){
+        assert(0);
         printf("start merkle_tree_from_values: poly_num:%d, values_num_per_poly:%d, log_len:%d, n_inv:%lu\n",
                poly_num, values_num_per_poly, log_len, p_inv->data);
         printf("d_values_flatten: %p, d_ext_values_flatten: %p\n", d_values_flatten, d_ext_values_flatten);
@@ -441,7 +442,7 @@ extern "C" {
             int pad_extvalues_len,
             CudaInvContext* ctx
     ){
-        printf("start merkle_tree_from_values: poly_num:%d, values_num_per_poly:%d, log_len:%d\n",
+        printf("start merkle_tree_from_coeffs: poly_num:%d, values_num_per_poly:%d, log_len:%d\n",
                poly_num, values_num_per_poly, log_len);
         printf("d_values_flatten: %p, d_ext_values_flatten: %p\n", d_values_flatten, d_ext_values_flatten);
 
@@ -461,21 +462,21 @@ extern "C" {
 
 
         clock_t start;
-    //        if (poly_num == 20) {
-    //            std::vector<GoldilocksField> values_flatten(values_num_per_poly*poly_num);
-    //            CUDA_ASSERT(cudaMemcpyAsync(&values_flatten[0], d_values_flatten,  values_num_per_poly*poly_num*sizeof(GoldilocksField),
-    //                                        cudaMemcpyDeviceToHost, stream));
-    //            cudaStreamSynchronize(stream);
-    //
-    //            std::ofstream file("values_flatten-gpu.bin", std::ios::binary);
-    //            if (file.is_open()) {
-    //                file.write(reinterpret_cast<const char*>(values_flatten.data()), values_flatten.size() * sizeof(uint64_t));
-    //                file.close();
-    //                std::cout << "Data written to file." << std::endl;
-    //            } else {
-    //                std::cerr << "Failed to open file." << std::endl;
-    //            }
-    //        }
+//        if (poly_num == 234) {
+//            std::vector<GoldilocksField> values_flatten(values_num_per_poly*poly_num);
+//            CUDA_ASSERT(cudaMemcpyAsync(&values_flatten[0], d_values_flatten,  values_num_per_poly*poly_num*sizeof(GoldilocksField),
+//                                        cudaMemcpyDeviceToHost, stream));
+//            cudaStreamSynchronize(stream);
+//
+//            std::ofstream file("values_flatten-gpu.bin", std::ios::binary);
+//            if (file.is_open()) {
+//                file.write(reinterpret_cast<const char*>(values_flatten.data()), values_flatten.size() * sizeof(uint64_t));
+//                file.close();
+//                std::cout << "Data written to file." << std::endl;
+//            } else {
+//                std::cerr << "Failed to open file." << std::endl;
+//            }
+//        }
 
         start = clock();
         thcnt = values_num_per_poly*poly_num;
@@ -582,6 +583,8 @@ extern "C" {
     //        PRINT_HEX("hash", cap_buf[i]);
     //    }
 
+        cudaStreamSynchronize(ctx->stream2);
+
         start = clock();
         thcnt = values_num_per_extpoly;
         nthreads = 32;
@@ -678,12 +681,12 @@ extern "C" {
         assert(gammas->len == num_challenges);
 
         start = clock();
-        thcnt = 20000;
+        thcnt = 300000;
         nthreads = 32;
         PoseidonHasher::HashOut public_inputs_hash = {
                 GoldilocksField{0x672c5e6c12ad3476}, GoldilocksField{0xca5c2e49acfad27e},
                 GoldilocksField{0x296be18388d15f70}, GoldilocksField{0x66b42e146a70d96d}
-        };;
+        };
         compute_quotient_values_kernel<<<(thcnt+nthreads-1)/nthreads, nthreads, 0, stream>>>(
                 log_len, rate_bits,
                 points->ptr,
@@ -708,6 +711,10 @@ extern "C" {
                 betas->ptr,
                 gammas->ptr
         );
+        if (auto code = cudaGetLastError(); code != cudaSuccess) {
+            printf("compute quotient error: %s\n", cudaGetErrorString(code));
+        }
+
         cudaStreamSynchronize(stream);
         printf("compute_quotient_values_kernel elapsed: %.2lf\n", (double )(clock()-start) / CLOCKS_PER_SEC * 1000);
 

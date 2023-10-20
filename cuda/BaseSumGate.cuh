@@ -27,6 +27,32 @@ struct BaseSumGate  INHERIT_BASE{
          auto limbs = vars.local_wires.view(this->limbs());
          auto computed_sum = reduce_with_powers(limbs, GoldilocksField::from_canonical_u64(B));
 
+//        auto computed_sum = GoldilocksField{0};
+//        auto range = Range<int>{0, limbs.len};
+//        for (int i = range.second-1; i >= range.first; --i) {
+//            auto limb = [limbs](int i) ->GoldilocksField {
+//                return limbs[i];
+//            }(i);
+//            computed_sum = computed_sum * GoldilocksField::from_canonical_u64(B) + limb;
+////            if (vars.index == 1048576) {
+////                printf("i: %d, r: %d, ", vars.index, i);
+////                limb.print_hex("limb", GoldilocksField::colum_space);
+////                computed_sum.print_hex("computed_sum", GoldilocksField::newline);
+////            }
+//        }
+
+//        auto computed_sum =
+//        reduce_with_powers(Range<int>{0, limbs.len}, [limbs](int i) ->GoldilocksField {
+//            return limbs[i];
+//        }, GoldilocksField::from_canonical_u64(B));
+
+//        auto index = vars.index;
+//        if (index == 1048576) {
+//            printf("i: %d, ", index);
+//            sum.print_hex("sum", GoldilocksField::colum_space);
+//            computed_sum.print_hex("computed_sum", GoldilocksField::newline);
+//        }
+
         yield_constr.one(computed_sum - sum);
 
         for (auto limb: limbs) {

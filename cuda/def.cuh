@@ -1018,6 +1018,7 @@ struct EvaluationVarsBasePacked {
     GoldilocksFieldView local_constants;
     GoldilocksFieldView local_wires;
     PoseidonHasher::HashOut public_inputs_hash;
+    int index; // for debug
 };
 
 struct StridedConstraintConsumer {

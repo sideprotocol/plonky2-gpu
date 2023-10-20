@@ -1174,7 +1174,7 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilder<F, D> {
                     my_leaf_len: 0,
                     my_leaves: Arc::new(vec![]),
                     my_leaves_len: 0,
-                    my_leaves_dev_offset: 0,
+                    my_leaves_dev_offset: -1,
                     my_digests: Arc::new(vec![]),
                 },
                 degree_log: degree_bits,
