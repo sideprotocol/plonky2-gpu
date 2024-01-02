@@ -1,7 +1,7 @@
 
 # Welcome to the `plonky2-gpu` Repository!
 
-In the pursuit of cryptographic efficiency, we present `plonky2-gpu`—a GPU-accelerated iteration of the Plonky2 project. Leveraging the CUDA framework, this repository embodies a meticulous reengineering of the original Plonky2 codebase, with a specific focus on optimizing three pivotal calculations: Fast Fourier Transform (FFT), Merkle tree construction, and polynomial manipulation.
+In the pursuit of cryptographic efficiency, we present `plonky2-gpu`—a GPU-accelerated iteration of the [Plonky2](https://github.com/0xPolygonZero/plonky2) project. Leveraging the CUDA framework, this repository embodies a meticulous reengineering of the original Plonky2 codebase, with a specific focus on optimizing three pivotal calculations: Fast Fourier Transform (FFT), Merkle tree construction, and polynomial manipulation.
 
 **Hardware Requirements:**
 - **CPU:** 8 cores
