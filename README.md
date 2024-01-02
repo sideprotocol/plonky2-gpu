@@ -12,6 +12,6 @@ In the pursuit of cryptographic efficiency, we introduce `plonky2-gpu` — a GPU
 **Examples:**
 - [`Plonky2-25519`](https://github.com/sideprotocol/plonky2-ed25519): Discover the enhanced performance, specially optimized for ed25519 signatures. This accelerated implementation has notably reduced the proving time for ed25519 signatures from 45 seconds to just 5 seconds. Experience the optimized performance specifically tailored for ed25519 signatures. 
 
-## Teams 
+## Contributor
 
  - [Side Labs](https://sidelabs.co)
