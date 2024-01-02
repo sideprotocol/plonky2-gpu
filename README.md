@@ -18,4 +18,4 @@ Join us in the evolution of Zero Knowledge Prove!
 
 ## Teams 
 
- - [Side Labs](https://www.side.one)
+ - [Side Labs](https://sidelabs.co)
