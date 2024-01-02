@@ -1,542 +1,4 @@
-#include <stdint.h>
-#include <cassert>
-#include <stdio.h>
-#include <iostream>
-
-//#define PRINT_HEX(data) \
-//    do  {               \
-//        printf("{");                \
-//        for (int k = 0; k < sizeof(data); ++k) printf("0x%02x%s", ((uint8_t*)&(data))[k], k==sizeof(data)-1?"":", ");\
-//        printf("}\n");\
-//    } while(0)
-
-#define PRINT_HEX_2(PROMT, ARR, N, BUF)					\
-  do {									\
-    int __my_local_remain = N;						\
-    __my_local_remain -= snprintf(BUF, __my_local_remain, "%s: ", PROMT); \
-    for (size_t __i_idx = 0; __i_idx < sizeof(ARR); __i_idx++) {	\
-      __my_local_remain -= snprintf(BUF, __my_local_remain, "%02x", ((uint8_t*)&(ARR))[__i_idx]); \
-      if ((__i_idx + 1) % 8 == 0 && __i_idx != sizeof(ARR) - 1) {	\
-	__my_local_remain -= snprintf(BUF, __my_local_remain, ", ");	\
-      }									\
-    }									\
-    snprintf(BUF, n, "\n");						\
-  }while(0)
-
-#define PRINT_HEX(PROMT, ARR)						\
-  do {									\
-    printf("%s: ", PROMT);						\
-    for (size_t __i_idx = 0; __i_idx < sizeof(ARR); __i_idx++) {	\
-      printf("%02x", ((uint8_t*)&(ARR))[__i_idx]);			\
-      if ((__i_idx + 1) % 8 == 0 && __i_idx != sizeof(ARR) - 1) {	\
-	printf(", ");							\
-      }									\
-    }									\
-    printf("\n");							\
-  }while(0)
-
-static inline __device__ int get_global_id() {
-    const int gid = threadIdx.x + blockIdx.x * blockDim.x;
-    return gid;
-}
-static inline __device__ int get_global_thcnt()
-{
-    return gridDim.x * blockDim.x;
-}
-
-static inline __device__ uint64_t overflowing_add(uint64_t a, uint64_t b, int* overflow) {
-    *overflow = UINT64_MAX - b < a;
-    return a + b;
-}
-static inline __device__ uint64_t overflowing_sub(uint64_t a, uint64_t b, int* overflow) {
-    *overflow = a < b;
-    return a - b;
-}
-
-const uint64_t EPSILON = (1ULL << 32) - 1;
-
-template<int BYTES>
-struct __align__(8) bytes_pad_type {
-    uint8_t data[BYTES];
-};
-
-#define BYTES_ASSIGN(dst, src, len)  \
-        *(bytes_pad_type<len>*)(dst) = *(bytes_pad_type<len>*)(src)
-
-typedef unsigned __int128 u128;
-
-#if 0
-class u128 {
-public:
-    uint64_t low;
-    uint64_t high;
-
-    __device__ inline u128(uint64_t l = 0, uint64_t h = 0) : low(l), high(h) {}
-
-    __device__ inline u128 operator+(const u128& other) const {
-        uint64_t sum_low = low + other.low;
-        uint64_t carry = sum_low < low ? 1 : 0;
-        uint64_t sum_high = high + other.high + carry;
-        return u128(sum_low, sum_high);
-    }
-
-    __device__ inline u128 operator-(const u128& other) const {
-        uint64_t diff_low = low - other.low;
-        uint64_t borrow = diff_low > low ? 1 : 0;
-        uint64_t diff_high = high - other.high - borrow;
-        return u128(diff_low, diff_high);
-    }
-
-    __device__ inline u128 operator*(const u128& other) const {
-//        uint64_t a0 = low & 0xFFFFFFFF;
-//        uint64_t a1 = low >> 32;
-//        uint64_t b0 = other.low & 0xFFFFFFFF;
-//        uint64_t b1 = other.low >> 32;
-//
-//        uint64_t prod0 = a0 * b0;
-//        uint64_t prod1 = a1 * b0 + (prod0 >> 32);
-//        uint64_t prod2 = a0 * b1 + (prod1 & 0xFFFFFFFF);
-//        uint64_t prod3 = a1 * b1 + (prod2 >> 32);
-//
-//        uint64_t carry = (prod3 >> 32) + (prod2 >> 32) + (prod1 >> 32);
-//        uint64_t result_low = (prod0 & 0xFFFFFFFF) | (prod1 << 32);
-//        uint64_t result_high = prod3 + carry;
-//
-//        return u128{result_low, result_high};
-        auto b = other;
-        auto a = *this;
-
-        u128 result = {0, 0};
-        for (int i = 0; i < 64; i++) {
-            if (b.low & 1) {
-                result = result + a;
-            }
-            a = a << 1;
-            b.low >>= 1;
-        }
-        return result;
-
-    }
-
-    __device__ inline u128& operator+=(const u128& other) {
-        *this = *this + other;
-        return *this;
-    }
-
-    __device__ inline u128 operator>>(int shift) const {
-        if (shift >= 128) {
-            return u128(0, 0);
-        } else if (shift >= 64) {
-            return u128(high >> (shift - 64), 0);
-        } else {
-            return u128((low >> shift) | (high << (64 - shift)), high >> shift);
-        }
-    }
-
-    __device__ inline u128 operator<<(int shift) const {
-        u128 result;
-        if (shift >= 64) {
-            result.high = this->low << (shift - 64);
-            result.low = 0;
-        } else {
-            result.high = (this->high << shift) | (this->low >> (64 - shift));
-            result.low = this->low << shift;
-        }
-        return result;
-        return result;
-    }
-
-    __device__ inline u128 overflowing_add(const u128& other, bool* overflow) const {
-        u128 result = *this + other;
-        *overflow = (result.high < high) || ((result.high == high) && (result.low < low));
-        return result;
-    }
-
-    __device__ inline operator uint64_t() const {
-        return low;
-    }
-
-};
-#endif
-
-struct  GoldilocksField{
-    uint64_t data;
-    static const uint64_t ORDER = 0xFFFFFFFF00000001;
-
-    __device__ inline GoldilocksField square() const {
-        return (*this) * (*this);
-    }
-    __device__ inline uint64_t to_noncanonical_u64() const{
-        return this->data;
-    }
-
-    static __device__ inline GoldilocksField from_canonical_u64(uint64_t n) {
-        return GoldilocksField{n};
-    }
-
-    static __device__ inline GoldilocksField from_noncanonical_u96(uint64_t n_lo, uint32_t n_hi) {
-        // Default implementation.
-        u128 n = (u128(n_hi) << 64) + u128(n_lo);
-        return from_noncanonical_u128(n);
-    }
-
-    static __device__ inline GoldilocksField  from_noncanonical_u128(u128 n) {
-        return reduce128(n >> 64, n & UINT64_MAX);
-    }
-
-    __device__ inline
-    GoldilocksField operator+(const GoldilocksField& rhs) {
-        int over = 0;
-        uint64_t sum = overflowing_add(this->data, rhs.data, &over);
-        sum = overflowing_add(sum, over * EPSILON, &over);
-        if (over) {
-                // NB: self.0 > Self::ORDER && rhs.0 > Self::ORDER is necessary but not sufficient for
-                // double-overflow.
-                // This assume does two things:
-                //  1. If compiler knows that either self.0 or rhs.0 <= ORDER, then it can skip this
-                //     check.
-                //  2. Hints to the compiler how rare this double-overflow is (thus handled better with
-                //     a branch).
-                assert(this->data > GoldilocksField::ORDER && rhs.data > GoldilocksField::ORDER);
-//                    branch_hint();
-                sum += EPSILON; // Cannot overflow.
-        }
-        return GoldilocksField{.data = sum};
-    }
-    __device__ inline
-    GoldilocksField operator-(const GoldilocksField& rhs) {
-        int under = 0;
-        uint64_t diff = overflowing_sub(this->data, rhs.data, &under);
-        diff = overflowing_sub(diff, under * EPSILON, &under);
-        if (under) {
-            // NB: self.0 > Self::ORDER && rhs.0 > Self::ORDER is necessary but not sufficient for
-            // double-overflow.
-            // This assume does two things:
-            //  1. If compiler knows that either self.0 or rhs.0 <= ORDER, then it can skip this
-            //     check.
-            //  2. Hints to the compiler how rare this double-overflow is (thus handled better with
-            //     a branch).
-            assert(this->data < EPSILON - 1 && rhs.data > GoldilocksField::ORDER);
-//                    branch_hint();
-            diff -= EPSILON; // Cannot overflow.
-        }
-        return GoldilocksField{.data = diff};
-    }
-
-    static __device__ inline
-    GoldilocksField reduce128(uint64_t x_hi, uint64_t x_lo) {
-        uint64_t x_hi_hi = x_hi >> 32;
-        uint64_t x_hi_lo = x_hi & EPSILON;
-
-        int borrow = 0;
-        uint64_t t0 = overflowing_sub(x_lo, x_hi_hi, &borrow);
-        if (borrow) {
-//            branch_hint(); // A borrow is exceedingly rare. It is faster to branch.
-            t0 -= EPSILON; // Cannot underflow.
-        }
-        uint64_t t1 = x_hi_lo * EPSILON;
-//        uint64_t t2 = unsafe { add_no_canonicalize_trashing_input(t0, t1) };
-
-        uint64_t t2;
-        if (UINT64_MAX - t1 < t0) {
-            t2 = (t1 + t0) + (0xffffffff);
-        }
-        else
-            t2 = (t0 + t1);
-        return GoldilocksField{.data = t2};
-    }
-
-    __device__ inline
-    GoldilocksField operator*(const GoldilocksField& rhs) const {
-        uint64_t high, low, a = this->data, b = rhs.data;
-        {
-            uint64_t a_low = a & 0xFFFFFFFF;
-            uint64_t a_high = a >> 32;
-            uint64_t b_low = b & 0xFFFFFFFF;
-            uint64_t b_high = b >> 32;
-
-            uint64_t product_low = a_low * b_low;
-            uint64_t product_mid1 = a_low * b_high;
-            uint64_t product_mid2 = a_high * b_low;
-            uint64_t product_high = a_high * b_high;
-
-            uint64_t carry = (product_low >> 32) + (product_mid1 & 0xFFFFFFFF) + (product_mid2 & 0xFFFFFFFF);
-            high = product_high + (product_mid1 >> 32) + (product_mid2 >> 32) + (carry >> 32);
-            low = (carry << 32) + (product_low & 0xFFFFFFFF);
-        }
-        return reduce128(high, low);
-    }
-    __device__ inline
-    GoldilocksField& operator*=(const GoldilocksField& rhs) {
-        *this = *this * rhs;
-        return *this;
-    }
-    __device__ inline
-    GoldilocksField& operator+=(const GoldilocksField& rhs) {
-        *this = *this + rhs;
-        return *this;
-    }
-
-    __device__ inline
-    GoldilocksField multiply_accumulate(GoldilocksField x, GoldilocksField y) {
-        // Default implementation.
-        return *this + x * y;
-    }
-
-    __device__ inline
-    GoldilocksField add_canonical_u64(uint64_t rhs) {
-        // Default implementation.
-        return *this + GoldilocksField::from_canonical_u64(rhs);
-    }
-
-};
-
-#include "constants.cuh"
-
-
-
-struct PoseidonHasher {
-    typedef uint32_t u32;
-    typedef uint64_t u64;
-
-    struct HashOut {
-        GoldilocksField elements[4] ;
-    };
-
-    template<class T1, class T2>
-    struct my_pair {
-        T1 first;
-        T2 second;
-        __device__ inline my_pair(const T1& t1, const T2& t2)
-        :first(t1), second(t2)
-        {
-        }
-    };
-
-    static __device__ inline my_pair<u128, u32> add_u160_u128(my_pair<u128, u32> pa, u128 y) {
-        auto x_lo = pa.first;
-        auto x_hi = pa.second;
-
-         auto overflowing_add = [](u128 a, u128 b, bool* overflow) {
-            *overflow = ~__uint128_t{} - b < a;
-            return a + b;
-        };
-
-        bool over;
-        auto res_lo = overflowing_add(x_lo, y, &over);
-        u32 res_hi = x_hi + u32(over);
-        return my_pair<u128, u32>{res_lo, res_hi};
-    }
-
-    static __device__ inline GoldilocksField reduce_u160(my_pair<u128, u32> pa) {
-        auto n_lo = pa.first;
-        auto n_hi = pa.second;
-
-        u64 n_lo_hi = (n_lo >> 64);
-        u64 n_lo_lo = n_lo;
-        u64 reduced_hi = GoldilocksField::from_noncanonical_u96(n_lo_hi, n_hi).to_noncanonical_u64();
-        u128 reduced128 = (u128(reduced_hi) << 64) + u128(n_lo_lo);
-        return GoldilocksField::from_noncanonical_u128(reduced128);
-    }
-
-    static __device__ inline void print_state(const char* promt, GoldilocksField* state) {
-        printf("%s: [", promt);
-        for (int i = 0; i < 12; ++i) {
-            printf("%lu%s", state[i], i == 11?"]\n":", ");
-        }
-    }
-    static __device__ inline
-    void permute_poseidon(GoldilocksField* state) {
-        int round_ctr = 0;
-
-        constexpr int WIDTH = SPONGE_WIDTH;
-        auto constant_layer = [&]() {
-            for (int i = 0; i < 12; ++i) {
-                if (i < WIDTH) {
-                    uint64_t round_constant = ALL_ROUND_CONSTANTS[i + WIDTH * round_ctr];
-                    state[i] = state[i].add_canonical_u64(round_constant);
-                }
-            }
-        };
-
-        auto sbox_monomial = [](GoldilocksField x) -> GoldilocksField {
-            // x |--> x^7
-            GoldilocksField x2 = x.square();
-            GoldilocksField x4 = x2.square();
-            GoldilocksField x3 = x * x2;
-            return x3 * x4;
-        };
-
-        auto sbox_layer = [&]() {
-            for (int i = 0; i < 12; ++i) {
-                if (i < WIDTH) {
-                    state[i] = sbox_monomial(state[i]);
-                }
-            }
-        };
-
-        auto mds_row_shf = [](int r, uint64_t v[WIDTH]) -> u128 {
-            assert(r < WIDTH);
-            // The values of `MDS_MATRIX_CIRC` and `MDS_MATRIX_DIAG` are
-            // known to be small, so we can accumulate all the products for
-            // each row and reduce just once at the end (done by the
-            // caller).
-
-            // NB: Unrolling this, calculating each term independently, and
-            // summing at the end, didn't improve performance for me.
-            u128 res = 0;
-
-            // This is a hacky way of fully unrolling the loop.
-            for (int i = 0; i < 12; ++i) {
-                if (i < WIDTH) {
-                    res += u128(v[(i + r) % WIDTH]) * u128(MDS_MATRIX_CIRC[i]);
-//                    printf("state 1211: %lu, %lu\n", res.high, res.low);
-                }
-            }
-            res += u128(v[r]) * u128(MDS_MATRIX_DIAG[r]);
-            return res;
-        };
-
-        auto mds_layer = [&]() {
-            uint64_t _state[SPONGE_WIDTH] = {0};
-
-            for (int r = 0; r < WIDTH; ++r)
-                _state[r] = state[r].to_noncanonical_u64();
-
-            // This is a hacky way of fully unrolling the loop.
-            for (int r = 0; r < 12; ++r) {
-                if (r < WIDTH) {
-                    auto sum = mds_row_shf(r, _state);
-//                    printf("state 121: %lu, %lu\n", sum.high, sum.low);
-                    uint64_t sum_lo = sum;
-                    uint32_t sum_hi = (sum >> 64);
-                    state[r] = GoldilocksField::from_noncanonical_u96(sum_lo, sum_hi);
-//                    printf("state 122: %lu, lo: %lu, hi: %u\n", state[r].data, sum_lo, sum_hi);
-                }
-            }
-        };
-
-        auto full_rounds = [&]() {
-            for (int r = 0; r < HALF_N_FULL_ROUNDS; ++r) {
-                constant_layer();
-//                print_state("state11", state);
-                sbox_layer();
-//                print_state("state12", state);
-                mds_layer();
-//                print_state("state13", state);
-                round_ctr += 1;
-            }
-        };
-
-        auto partial_first_constant_layer = [&]() {
-            for (int i = 0; i < 12; ++i) {
-                if (i < WIDTH) {
-                    state[i] += GoldilocksField::from_canonical_u64(FAST_PARTIAL_FIRST_ROUND_CONSTANT[i]);
-                }
-            }
-        };
-
-        auto mds_partial_layer_init = [&]() {
-            // Initial matrix has first row/column = [1, 0, ..., 0];
-
-            GoldilocksField result[WIDTH] = {0};
-            // c = 0
-            result[0] = state[0];
-
-            for (int r = 1; r < 12; ++r) {
-                if (r < WIDTH) {
-                    for (int c = 1; c < 12; ++c) {
-                        if (c < WIDTH) {
-                            // NB: FAST_PARTIAL_ROUND_INITIAL_MATRIX is stored in
-                            // row-major order so that this dot product is cache
-                            // friendly.
-                            auto t = GoldilocksField::from_canonical_u64(
-                                    FAST_PARTIAL_ROUND_INITIAL_MATRIX[r - 1][c - 1]
-                            );
-                            result[c] += state[r] * t;
-                        }
-                    }
-                }
-            }
-            for (int i = 0; i < WIDTH; ++i)
-                state[i] = result[i];
-        };
-
-        auto mds_partial_layer_fast = [&](int r) {
-            // Set d = [M_00 | w^] dot [state]
-//            print_state("state21", state);
-
-            my_pair<u128, u32> d_sum = {0, 0}; // u160 accumulator
-            for (int i = 1; i < 12; ++i) {
-                if (i < WIDTH) {
-                    u128 t = FAST_PARTIAL_ROUND_W_HATS[r][i - 1];
-                    u128 si = state[i].to_noncanonical_u64();
-                    d_sum = add_u160_u128(d_sum, si * t);
-                }
-            }
-
-            u128 s0 = u128(state[0].to_noncanonical_u64());
-            u128 mds0to0 = u128(MDS_MATRIX_CIRC[0] + MDS_MATRIX_DIAG[0]);
-            d_sum = add_u160_u128(d_sum, s0 * mds0to0);
-            auto d = reduce_u160(d_sum);
-
-            // result = [d] concat [state[0] * v + state[shift up by 1]]
-            GoldilocksField result[SPONGE_WIDTH];
-//            let mut result = [ZERO; WIDTH];
-            result[0] = d;
-            for (int i = 1; i < 12; ++i) {
-                if (i < WIDTH) {
-                    auto t = GoldilocksField::from_canonical_u64(FAST_PARTIAL_ROUND_VS[r][i - 1]);
-                    result[i] = state[i].multiply_accumulate(state[0], t);
-                }
-            }
-            for (int i = 0; i < 12; ++i)
-                state[i] = result[i];
-//            print_state("state22", state);
-        };
-
-        auto partial_rounds = [&]() {
-            partial_first_constant_layer();
-            mds_partial_layer_init();
-
-            for (int i = 0; i < N_PARTIAL_ROUNDS; ++i) {
-                state[0] = sbox_monomial(state[0]);
-//            unsafe
-                {
-                    state[0] = state[0].add_canonical_u64(FAST_PARTIAL_ROUND_CONSTANTS[i]);
-                }
-//                *state = mds_partial_layer_fast(state, i);
-                mds_partial_layer_fast(i);
-            }
-            round_ctr += N_PARTIAL_ROUNDS;
-        };
-
-//        print_state("state1", state);
-        full_rounds();
-//        print_state("state2", state);
-        partial_rounds();
-//        print_state("state3", state);
-        full_rounds();
-//        print_state("state4", state);
-
-        assert(round_ctr == N_ROUNDS);
-
-    }
-
-    static __device__ inline HashOut hash_n_to_m_no_pad(const GoldilocksField* input) {
-        GoldilocksField state[SPONGE_WIDTH] = {0};
-
-        constexpr int len = 4;
-        // Absorb all input chunks.
-        for (int i = 0; i < len; i += SPONGE_RATE) {
-            for (int j = 0; j < SPONGE_RATE; ++j)
-                state[j] = input[i*SPONGE_RATE+j];
-            permute_poseidon(state);
-        }
-
-        return *(HashOut*)state;
-    }
-};
+#include "def.cuh"
 
 __global__
 void ifft_kernel(GoldilocksField* values_flatten, int poly_num, int values_num_per_poly, int log_len, const GoldilocksField* root_table, GoldilocksField n_inv);
@@ -635,6 +97,8 @@ void fft_dispatch(GoldilocksField* values_flatten, int poly_num, int values_num_
 //        printf("\n");
 //    }
     reverse_index_bits(values_flatten, poly_num, values_num_per_poly, log_len);
+//    if (get_global_id() == 0 && poly_num == 2) printf("after  reverse v1: %lx\n", values_flatten[0].data);
+//    if (get_global_id() == 0 && poly_num == 2) printf("after  reverse v2: %lx\n", values_flatten[1].data);
 
 //    __syncthreads();
 //    if (get_global_id() == 0) {
@@ -706,7 +170,12 @@ void fft_dispatch(GoldilocksField* values_flatten, int poly_num, int values_num_
             GoldilocksField u = packed_values[kk + j];
             packed_values[kk + j] = u + t;
             packed_values[kk + half_packed_m + j] = u - t;
+//            if (lg_half_m == 0 && poly_num == 2 && poly_idx == 0 && k == 0)
+//                printf("in round 0 k: %d v1: %lx, omega: %lx, t: %lx, tt: %lx, u: %lx, kk:%d, j:%d\n",
+//                       lg_half_m, values_flatten[0].data, omega.data, t.data, packed_values[kk + half_packed_m + j].data, u.data, kk, j);
+
         }
+
 //        if (get_global_id() == 0) {
 //            printf("buf5 lg_half_m:%d: ", lg_half_m);
 //            for (int i = (1<<20); i < 8+(1<<20); ++i) {
@@ -715,6 +184,9 @@ void fft_dispatch(GoldilocksField* values_flatten, int poly_num, int values_num_
 //            printf("\n");
 //        }
         __syncthreads();
+
+//        if (value_idx == 0 && poly_num == 2 && poly_idx == 0) printf("in round: %d v1: %lx\n", lg_half_m, values_flatten[0].data);
+
     }
 //    reverse_index_bits(values_flatten, poly_num, values_num_per_poly, log_len);
 
@@ -741,7 +213,11 @@ void fft_dispatch(GoldilocksField* values_flatten, int poly_num, int values_num_
 
 __global__
 void ifft_kernel(GoldilocksField* values_flatten, int poly_num, int values_num_per_poly, int log_len, const GoldilocksField* root_table, GoldilocksField n_inv) {
+//    if (get_global_id() == 0 && poly_num == 2) printf("before fft_dispatch v1: %lx\n", values_flatten[0].data);
+//    if (get_global_id() == 0 && poly_num == 2) printf("before fft_dispatch v2: %lx\n", values_flatten[1<<20].data);
     fft_dispatch(values_flatten, poly_num, values_num_per_poly, log_len, root_table, 0);
+//    if (get_global_id() == 0 && poly_num == 2) printf("after fft_dispatch v1: %lx\n", values_flatten[0].data);
+//    if (get_global_id() == 0 && poly_num == 2) printf("after fft_dispatch v2: %lx\n", values_flatten[1<<20].data);
 
     int thCnt = get_global_thcnt();
     int gid = get_global_id();
@@ -991,8 +467,6 @@ void transpose_kernel(GoldilocksField* src_values_flatten, GoldilocksField* dst_
     int thCnt = get_global_thcnt();
     int gid = get_global_id();
 
-    assert(thCnt > poly_num);
-
     for (int i = gid; i < poly_num*values_num_per_poly; i += thCnt) {
         unsigned val_idx = i / poly_num;
         unsigned poly_idx = i % poly_num;
@@ -1001,6 +475,425 @@ void transpose_kernel(GoldilocksField* src_values_flatten, GoldilocksField* dst_
         GoldilocksField *dst_value = dst_values_flatten + val_idx * poly_num + poly_idx;
 
         *dst_value = *src_value;
+    }
+}
+
+
+#include "gates-def.cuh"
+
+
+__global__
+void compute_quotient_values_kernel(
+        int degree_log, int rate_bits, GoldilocksField* points, GoldilocksField* outs,
+        PoseidonHasher::HashOut public_inputs_hash,
+
+
+        GoldilocksField* constants_sigmas_commitment_leaves,     int constants_sigmas_commitment_leaf_len,
+        GoldilocksField* zs_partial_products_commitment_leaves,  int zs_partial_products_commitment_leaf_len,
+        GoldilocksField* wires_commitment_leaves,                int wires_commitment_leaf_len,
+        int num_constants, int _num_routed_wires,
+        int _num_challenges,
+        int _num_gate_constraints,
+
+        int _quotient_degree_factor,
+        int num_partial_products,
+
+        GoldilocksField* z_h_on_coset_evals,
+        GoldilocksField* z_h_on_coset_inverses,
+
+        GoldilocksField* k_is,
+        GoldilocksField* alphas,
+        GoldilocksField* betas,
+        GoldilocksField* gammas
+
+)
+{
+    constexpr int num_challenges = 2;
+    constexpr int num_gate_constraints = 231;
+    assert(num_gate_constraints == _num_gate_constraints);
+    assert(num_challenges == _num_challenges);
+
+    int thCnt = get_global_thcnt();
+    int gid = get_global_id();
+
+//    if (gid == 0) {
+//        auto res = GoldilocksField::from_canonical_u64(0xfff923c55a2e4a87) * GoldilocksField::from_canonical_u64(0xbfa99fe2edeb56f5);
+//        printf("mul: %lx\n", res.data);
+////        assert(res == GoldilocksField::from_canonical_u64(1));
+//    }
+
+    int step = 1;
+    int next_step = 8;
+    int values_num_per_extpoly = (1<<(rate_bits+degree_log));
+//    int values_num_per_extpoly = 1;
+    int lde_size  = values_num_per_extpoly;
+
+    constexpr int quotient_degree_factor = 8;
+    constexpr int num_routed_wires = 80;
+    constexpr int max_degree = quotient_degree_factor;
+    int num_prods = num_partial_products;
+
+//    if (gid == 0) {
+//        GoldilocksFieldView{alphas, num_challenges}.print_hex("alphas");
+//        GoldilocksFieldView{betas, num_challenges}.print_hex("betas");
+//        GoldilocksFieldView{gammas, num_challenges}.print_hex("gammas");
+//
+//    }
+
+    auto get_lde_values = [degree_log, rate_bits](GoldilocksField* leaves, int leaf_len, int i, int step) -> GoldilocksFieldView {
+        int index = i * step;
+        index = bitrev(index, degree_log+rate_bits);
+        return GoldilocksFieldView{&leaves[index*leaf_len], leaf_len};
+    };
+
+    for (int index = gid; index < values_num_per_extpoly; index += thCnt) {
+        GoldilocksField x = GoldilocksField::coset_shift() * points[index];
+        int i_next = (index + next_step) % lde_size;
+        auto local_constants_sigmas = get_lde_values(constants_sigmas_commitment_leaves,
+                                                     constants_sigmas_commitment_leaf_len, index, step);
+
+        auto local_constants = local_constants_sigmas.view(0, num_constants);
+        auto s_sigmas = local_constants_sigmas.view(num_constants, num_constants + num_routed_wires);
+        auto local_wires = get_lde_values(wires_commitment_leaves, wires_commitment_leaf_len, index, step);
+        auto local_zs_partial_products = get_lde_values(zs_partial_products_commitment_leaves,
+                                                        zs_partial_products_commitment_leaf_len, index, step);
+        auto local_zs = local_zs_partial_products.view(0, num_challenges);
+        auto next_zs = get_lde_values(zs_partial_products_commitment_leaves, zs_partial_products_commitment_leaf_len,
+                                      i_next, step).view(0, num_challenges);
+
+        auto partial_products = local_zs_partial_products.view(num_challenges);
+
+//        if (index == 1048576) {
+//            printf("i: %d, len: %d, lcs: ", index, local_constants_sigmas.len);
+//            local_constants_sigmas.print_hex();
+//            printf("i: %d, len: %d, lw: ", index, local_wires.len);
+//            local_wires.print_hex();
+//            printf("i: %d, len: %d, lzpp: ", index, local_zs_partial_products.len);
+//            local_zs_partial_products.print_hex();
+//            printf("i: %d, len: %d, nzs: ", index, next_zs.len);
+//            next_zs.print_hex();
+//        }
+
+//        let constraint_terms_batch =
+//        evaluate_gate_constraints_base_batch::<F, C, D>(common_data, vars_batch);
+
+        assert(num_routed_wires % max_degree == 0);
+
+//        let constraint_terms = PackedStridedView::new(&constraint_terms_batch, n, k);
+
+        GoldilocksField res[num_challenges] = {0};
+
+        auto reduce_with_powers = [&res, &alphas, num_challenges](GoldilocksField term) {
+            for (int i = 0; i < num_challenges; ++i) {
+                res[i] = term + res[i] * alphas[i];
+            }
+        };
+
+        GoldilocksField constraint_terms_batch[num_gate_constraints] = {0};
+        auto evaluate_gate_constraints_base_batch = [&]()
+        {
+            struct SelectorsInfo {
+                int *selector_indices;
+                Range<int>* groups;
+            };
+
+            int selector_indices[25] = {
+                    0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4, 5
+            };
+
+            constexpr  int num_selectors = 6;
+            Range<int> groups[num_selectors] = {
+                    Range<int>{0,6},
+                    Range<int>{6,11},
+                    Range<int>{11,16},
+                    Range<int>{16,21},
+                    Range<int>{21,24},
+                    Range<int>{24,25}
+            };
+            SelectorsInfo selectors_info = {
+                    .selector_indices = selector_indices,
+                    .groups = groups
+            };
+
+            struct BaseGate {};
+            using FUNC = void (BaseGate::*)(EvaluationVarsBasePacked, StridedConstraintConsumer yield_constr);
+
+            struct GateFUNC {
+                BaseGate* gate;
+                FUNC func;
+                int num_constraints;
+            };
+            constexpr const int num_gates = 25;
+            GateFUNC gate_objs[num_gates];
+
+#define DECL_GATE_NAME(TYPE, NAME, INDEX) \
+        gate_objs[INDEX] = GateFUNC{.gate = (BaseGate*)&NAME, .func = (FUNC)&TYPE::eval_unfiltered_base_packed, .num_constraints = NAME.num_constraints()};
+
+            NoopGate NoopGate_ins;
+            DECL_GATE_NAME(NoopGate,NoopGate_ins, 0);
+            ConstantGate ConstantGate_ins{ .num_consts = 2 };
+            DECL_GATE_NAME(ConstantGate, ConstantGate_ins, 1);
+
+            PublicInputGate PublicInputGate_ins;
+            DECL_GATE_NAME(PublicInputGate,PublicInputGate_ins, 2);
+
+            BaseSumGate<2> BaseSumGate_ins{ .num_limbs = 32 };
+            DECL_GATE_NAME(BaseSumGate<2>,BaseSumGate_ins, 3);
+            BaseSumGate<2> BaseSumGate_ins2{ .num_limbs = 63 };
+            DECL_GATE_NAME(BaseSumGate<2>,BaseSumGate_ins2, 4);
+            ArithmeticGate ArithmeticGate_ins{ .num_ops = 20 };
+            DECL_GATE_NAME(ArithmeticGate,ArithmeticGate_ins, 5);
+            BaseSumGate<4> BaseSumGate_ins3{ .num_limbs = 16 };
+            DECL_GATE_NAME(BaseSumGate<4>,BaseSumGate_ins3, 6);
+
+            ComparisonGate ComparisonGate_ins{ .num_bits = 32, .num_chunks = 16};
+            DECL_GATE_NAME(ComparisonGate,ComparisonGate_ins, 7);
+
+            U32AddManyGate U32AddManyGate_ins{ .num_addends = 0, .num_ops = 11};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins, 8);
+            U32AddManyGate U32AddManyGate_ins2{ .num_addends = 11, .num_ops = 5};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins2, 9);
+            U32AddManyGate U32AddManyGate_ins3{ .num_addends = 13, .num_ops = 5};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins3, 10);
+            U32AddManyGate U32AddManyGate_ins4{ .num_addends = 15, .num_ops = 4};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins4, 11);
+            U32AddManyGate U32AddManyGate_ins5{ .num_addends = 16, .num_ops = 4};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins5, 12);
+            U32AddManyGate U32AddManyGate_ins6{ .num_addends = 2, .num_ops = 10};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins6, 13);
+            U32AddManyGate U32AddManyGate_ins7{ .num_addends = 3, .num_ops = 9};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins7, 14);
+            U32AddManyGate U32AddManyGate_ins8{ .num_addends = 5, .num_ops = 9};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins8, 15);
+            U32AddManyGate U32AddManyGate_ins9{ .num_addends = 7, .num_ops = 8};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins9, 16);
+            U32AddManyGate U32AddManyGate_ins10{ .num_addends = 9, .num_ops = 6};
+            DECL_GATE_NAME(U32AddManyGate,U32AddManyGate_ins10, 17);
+            U32ArithmeticGate U32ArithmeticGate_ins{ .num_ops = 6};
+            DECL_GATE_NAME(U32ArithmeticGate,U32ArithmeticGate_ins, 18);
+            U32RangeCheckGate U32RangeCheckGate_ins2{ .num_input_limbs = 0};
+            DECL_GATE_NAME(U32RangeCheckGate,U32RangeCheckGate_ins2, 19);
+            U32RangeCheckGate U32RangeCheckGate_ins3{ .num_input_limbs = 1};
+            DECL_GATE_NAME(U32RangeCheckGate,U32RangeCheckGate_ins3, 20);
+            U32RangeCheckGate U32RangeCheckGate_ins4{ .num_input_limbs = 8};
+            DECL_GATE_NAME(U32RangeCheckGate,U32RangeCheckGate_ins4, 21);
+            U32SubtractionGate U32SubtractionGate_ins{ .num_ops = 11};
+            DECL_GATE_NAME(U32SubtractionGate,U32SubtractionGate_ins, 22);
+            RandomAccessGate RandomAccessGate_ins{ .bits = 4, .num_copies = 4, .num_extra_constants = 2};
+            DECL_GATE_NAME(RandomAccessGate,RandomAccessGate_ins, 23);
+            PoseidonGate PoseidonGate_ins;
+            DECL_GATE_NAME(PoseidonGate,PoseidonGate_ins, 24);
+
+//            if (index == 1048576) {
+//                printf("i: %d, local_constants: ", index);
+//                local_constants.print_hex();
+//                printf("i: %d, local_wires: ", index);
+//                local_wires.print_hex();
+//            }
+
+            GoldilocksField terms[num_gate_constraints];
+            auto evaluate_gate_constraints_base_batch = [index, public_inputs_hash, &constraint_terms_batch, &terms, gate_objs, selectors_info, local_constants, local_wires]() {
+                for (int row = 0; row < num_gates; ++row) {
+                    int selector_index = selectors_info.selector_indices[row];
+                    auto gate = gate_objs[row];
+
+                    auto compute_filter = [](int row, Range<int> group_range, GoldilocksField s,
+                                             bool many_selector) -> GoldilocksField {
+                        assert(group_range.contains(row));
+                        GoldilocksField res = {1};
+                        for (int i = group_range.first; i < group_range.second; ++i) {
+                            if (i == row)
+                                continue;
+                            res *= GoldilocksField::from_canonical_u64(i) - s;
+                        }
+
+                        const uint32_t UNUSED_SELECTOR = UINT32_MAX;
+
+                        if (many_selector) {
+                            res *= GoldilocksField::from_canonical_u64(UNUSED_SELECTOR) - s;
+                        }
+                        return res;
+                    };
+
+                    auto filter = compute_filter(
+                            row,
+                            selectors_info.groups[selector_index],
+                            local_constants[selector_index],
+                            num_selectors > 1
+                    );
+
+                    EvaluationVarsBasePacked vars = {
+                            .local_constants = local_constants.view(num_selectors, local_constants.len),
+                            .local_wires = local_wires,
+                            .public_inputs_hash = public_inputs_hash,
+                            .index = index
+                    };
+
+//                    if (index == 1048576) {
+//                        printf("i: %d, row: %d, filter: ", index, row);
+//                        filter.print_hex(nullptr, GoldilocksField::newline);
+//                    }
+
+                    for (int i = 0; i < gate.num_constraints; ++i) {
+                        terms[i] = GoldilocksField{0};
+                    }
+
+                    auto fn = gate.func;
+                    auto yield_constr =  StridedConstraintConsumer{terms, &terms[gate.num_constraints]};
+                    ((gate.gate)->*fn)(vars, yield_constr);
+//                    if (index == 1048576) {
+//                        printf("i: %d, row: %d, terms: ", index, row);
+//                        GoldilocksFieldView{terms, gate.num_constraints}.print_hex();
+//                    }
+
+                    for (int i = 0; i < gate.num_constraints; ++i) {
+                        constraint_terms_batch[i] += terms[i] * filter;
+                    }
+
+                }
+            };
+
+            evaluate_gate_constraints_base_batch();
+        };
+        evaluate_gate_constraints_base_batch();
+//        if (index == 1048576) {
+//            printf("i: %d, constraint_terms: ", index);
+//            GoldilocksFieldView{constraint_terms_batch, num_gate_constraints}.print_hex();
+//        }
+        for (int i = num_gate_constraints-1; i >= 0; --i) {
+            reduce_with_powers(constraint_terms_batch[i]);
+        }
+
+        constexpr int vanishing_partial_products_terms_len = num_challenges * num_routed_wires/max_degree;
+        GoldilocksField vanishing_partial_products_terms[vanishing_partial_products_terms_len];
+        for (int i = 0; i < num_challenges; ++i) {
+            auto z_x = local_zs[i];
+            auto z_gx = next_zs[i];
+
+            // The partial products considered for this iteration of `i`.
+            auto current_partial_products = partial_products.view(i * num_prods, (i + 1) * num_prods);
+            // Check the numerator partial products.
+//            let partial_product_checks = check_partial_products(
+//                    &numerator_values,
+//                    &denominator_values,
+//                    current_partial_products,
+////                    z_x,
+////                    z_gx,
+//                    max_degree,
+//            );
+
+            GoldilocksField prev_acc, next_acc;
+            constexpr int partial_product_rounds = num_routed_wires/max_degree;
+            assert(current_partial_products.len == partial_product_rounds-1);
+            for (int k = 0; k < partial_product_rounds; ++k) {
+                GoldilocksField num_chunk_product = GoldilocksField::from_canonical_u64(1);
+                for (int j = k*max_degree; j < (k+1)*max_degree; ++j) {
+                    auto wire_value = local_wires[j];
+                    auto k_i = k_is[j];
+                    auto s_id = k_i * x;
+                    auto v = wire_value + betas[i] * s_id + gammas[i];
+                    num_chunk_product *= v;
+//                    if (index == 1048576) {
+//                        printf("i: %d, wi: %d, ", index, j);
+//                        wire_value.print_hex("wire_value", GoldilocksField::colum_space);
+//                        k_i.print_hex("k_i", GoldilocksField::colum_space);
+//                        x.print_hex("x", GoldilocksField::newline);
+//                        v.print_hex("v", GoldilocksField::newline);
+//                    }
+                }
+                GoldilocksField den_chunk_product = GoldilocksField::from_canonical_u64(1);
+                for (int j = k*max_degree; j < (k+1)*max_degree; ++j) {
+                    auto wire_value = local_wires[j];
+                    auto s_sigma = s_sigmas[j];
+                    den_chunk_product *= wire_value + betas[i] * s_sigma + gammas[i];
+                }
+                if (k == 0) {
+                    prev_acc = z_x;
+                } else {
+                    prev_acc = next_acc;
+                }
+
+                if (k == partial_product_rounds-1)
+                    next_acc = z_gx;
+                else
+                    next_acc = current_partial_products[k];
+
+                vanishing_partial_products_terms[i * partial_product_rounds + k] = (prev_acc * num_chunk_product - next_acc * den_chunk_product);
+
+//                if (index == 1048576) {
+//                    printf("i: %d, partial_product_checks: ", index);
+//                    GoldilocksFieldView{vanishing_partial_products_terms, vanishing_partial_products_terms_len}.print_hex();
+//                }
+
+            }
+        }
+//        if (index == 1048576) {
+//            printf("i: %d, term: ", index);
+//            GoldilocksFieldView{vanishing_partial_products_terms, vanishing_partial_products_terms_len}.print_hex();
+//        }
+        for (int i = vanishing_partial_products_terms_len-1; i >= 0; --i) {
+            reduce_with_powers(vanishing_partial_products_terms[i]);
+        }
+
+        auto eval_l_0 = [z_h_on_coset_evals, rate_bits, degree_log](int index, GoldilocksField x) -> GoldilocksField {
+//            if ((GoldilocksField::from_canonical_u64(1 << degree_log) * (x - GoldilocksField{1})).data == 0xfff923c55a2e4a87)
+//                printf("index: %d\n", index);
+
+            return z_h_on_coset_evals[index % (1<<rate_bits)] *
+//                    (GoldilocksField::from_canonical_u64(1 << degree_log) * (x - GoldilocksField{1}));
+                    (GoldilocksField::from_canonical_u64(1 << degree_log) * (x - GoldilocksField{1})).inverse();
+
+        };
+
+        auto l_0_x = eval_l_0(index, x);
+//        if (index == 1048576) {
+//            l_0_x.print_hex("l_0_x", GoldilocksField::colum_space);
+//            z_h_on_coset_evals[index%(1<<rate_bits)].print_hex("ev", GoldilocksField::colum_space);
+//            auto den = (GoldilocksField::from_canonical_u64(1<<degree_log) * (x - GoldilocksField{1}));
+//            den.print_hex("den", GoldilocksField::colum_space);
+//            den.inverse().print_hex("denv", GoldilocksField::newline);
+//        }
+
+        for (int i = num_challenges-1; i >= 0; --i) {
+            auto z_x = local_zs[i];
+//            res[0] = GoldilocksField::from_canonical_u64(0);
+            reduce_with_powers(l_0_x * z_x.sub_one());
+        }
+
+
+        auto denominator_inv = z_h_on_coset_inverses[index % (1<<rate_bits)];
+        for (int i = 0; i < num_challenges; ++i) {
+            res[i] *= denominator_inv;
+        }
+//
+//        if (index == 1048576) {
+//            printf("i: %d, res: ", index);
+//            GoldilocksFieldView{res, num_challenges}.print_hex();
+//        }
+
+        outs[index*2]   = res[0];
+        outs[index*2+1] = res[1];
+    }
+
+}
+
+__global__
+void mul_kernel(GoldilocksField* values_flatten, int poly_num, int values_num_per_poly, const GoldilocksField* mul_values)
+{
+    int thCnt = get_global_thcnt();
+    int gid = get_global_id();
+
+    for (int i = gid; i < poly_num*values_num_per_poly; i += thCnt) {
+        unsigned idx = i % values_num_per_poly;
+        unsigned poly_idx = i / values_num_per_poly;
+
+        GoldilocksField* values = values_flatten + poly_idx*values_num_per_poly;
+//        if (idx == 2086137) {
+//            printf("i: %d, poly:%d, res: ", idx, poly_idx);
+//            values[idx].print_hex(nullptr, GoldilocksField::newline);
+//        }
+
+        values[idx] *= mul_values[idx];
     }
 }
 

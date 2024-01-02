@@ -1,4 +1,5 @@
 #![feature(inherent_associated_types)]
+#![feature(allocator_api)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_range_loop)]
 #![cfg_attr(not(feature = "std"), no_std)]

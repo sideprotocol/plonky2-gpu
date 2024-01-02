@@ -1173,6 +1173,8 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilder<F, D> {
                     cap: MerkleCap(caps_vec),
                     my_leaf_len: 0,
                     my_leaves: Arc::new(vec![]),
+                    my_leaves_len: 0,
+                    my_leaves_dev_offset: -1,
                     my_digests: Arc::new(vec![]),
                 },
                 degree_log: degree_bits,
@@ -1245,7 +1247,6 @@ impl<F: RichField + Extendable<D>, const D: usize> CircuitBuilder<F, D> {
             ],
         ];
         let circuit_digest = C::Hasher::hash_no_pad(&circuit_digest_parts.concat());
-
         let common = CommonCircuitData {
             config: self.config,
             fri_params,
