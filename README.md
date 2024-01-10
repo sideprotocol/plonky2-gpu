@@ -8,9 +8,12 @@ In the pursuit of cryptographic efficiency, we introduce `plonky2-gpu` — a GPU
 - **RAM:** 16GB
 - **GPU:** NVIDIA 2080 Ti
 - **GPU RAM:** 12GB
+- **CUDA Version**: 12+ 
 
 **Examples:**
 - [`Plonky2-25519`](https://github.com/sideprotocol/plonky2-ed25519): Discover the enhanced performance, specially optimized for ed25519 signatures. This accelerated implementation has notably reduced the proving time for ed25519 signatures from 45 seconds to just 5 seconds. Experience the optimized performance specifically tailored for ed25519 signatures. 
+
+**DISCLAIMER: This implementation is currently in its early stages and is not deemed production-ready. Use for experimentation and exploration purposes only.**
 
 ## Contributor
 
